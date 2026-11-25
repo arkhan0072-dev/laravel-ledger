@@ -48,7 +48,7 @@ composer install
 vendor/bin/pest
 ```
 
-CI runs the tests on PHP 8.2-8.4 and Laravel 11-12, against both SQLite and PostgreSQL, and fails below 100% line coverage.
+CI runs the tests on PHP 8.2-8.4 and Laravel 12, against both SQLite and PostgreSQL, and fails below 100% line coverage.
 
 ## License
 
