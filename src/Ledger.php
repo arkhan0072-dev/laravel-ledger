@@ -66,6 +66,49 @@ class Ledger
         }
     }
 
+    /**
+     * Audit the stored data for anything the API would have refused, e.g. rows written with raw SQL.
+     *
+     * @return list<string> one message per problem; empty when the ledger is consistent
+     */
+    public function verify(): array
+    {
+        $problems = [];
+
+        $entries = DB::table('ledger_journal_entries as e')
+            ->leftJoin('ledger_entry_lines as l', 'l.journal_entry_id', '=', 'e.id')
+            ->groupBy('e.id')
+            ->orderBy('e.id')
+            ->selectRaw('e.id, count(l.id) as line_count, coalesce(sum(l.debit), 0) as debits, coalesce(sum(l.credit), 0) as credits')
+            ->havingRaw('count(l.id) < 2 or coalesce(sum(l.debit), 0) <> coalesce(sum(l.credit), 0)')
+            ->get();
+
+        foreach ($entries as $e) {
+            $problems[] = $e->line_count < 2
+                ? "Entry #{$e->id} has {$e->line_count} line(s); at least two are required."
+                : "Entry #{$e->id} does not balance: debits {$e->debits}, credits {$e->credits}.";
+        }
+
+        $lines = DB::table('ledger_entry_lines as l')
+            ->join('ledger_journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
+            ->join('ledger_accounts as a', 'a.id', '=', 'l.account_id')
+            ->where(fn ($q) => $q->whereColumn('a.currency', '<>', 'e.currency')
+                ->orWhereRaw('(l.debit > 0) = (l.credit > 0)'))
+            ->orderBy('l.id')
+            ->get(['l.id', 'l.journal_entry_id', 'l.debit', 'l.credit', 'a.currency as account_currency', 'e.currency']);
+
+        foreach ($lines as $l) {
+            if (($l->debit > 0) === ($l->credit > 0)) {
+                $problems[] = "Line #{$l->id} in entry #{$l->journal_entry_id} must have exactly one positive side.";
+            }
+            if ($l->account_currency !== $l->currency) {
+                $problems[] = "Line #{$l->id} in entry #{$l->journal_entry_id} uses {$l->account_currency}, but the entry is in {$l->currency}.";
+            }
+        }
+
+        return $problems;
+    }
+
     private function write(array $rows, array $attributes): JournalEntry
     {
         return DB::transaction(function () use ($rows, $attributes) {
