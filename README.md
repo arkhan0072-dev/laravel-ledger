@@ -11,7 +11,7 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Idempotent posting.** Send an idempotency key with a posting (an order ID, a webhook event ID) and a retry returns the stored entry instead of booking it twice.
 - **Append-only history.** Posted entries and lines cannot be updated or deleted; mistakes are cancelled with a reversal entry, like on paper.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
-- **Tested on SQLite and PostgreSQL**, PHP 8.2-8.4, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
+- **Tested on SQLite and PostgreSQL**, PHP 8.3-8.4, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
 
 ## Data model
 
