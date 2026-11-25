@@ -21,6 +21,10 @@ return new class extends Migration
             $table->id();
             $table->string('description');
             $table->char('currency', 3);
+            $table->string('idempotency_key')->nullable()->unique();
+            $table->char('request_hash', 64)->nullable();
+            // Unique: an entry can be reversed at most once, even under concurrent requests.
+            $table->foreignId('reverses_id')->nullable()->unique()->constrained('ledger_journal_entries')->restrictOnDelete();
             $table->timestamps();
         });
 
