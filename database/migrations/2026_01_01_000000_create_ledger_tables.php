@@ -34,6 +34,8 @@ return new class extends Migration
             $table->foreignId('account_id')->constrained('ledger_accounts')->restrictOnDelete();
             $table->unsignedBigInteger('debit')->default(0);
             $table->unsignedBigInteger('credit')->default(0);
+            // PostgreSQL does not index foreign keys; balance() sums lines by account.
+            $table->index('account_id');
         });
     }
 
