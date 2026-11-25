@@ -6,6 +6,25 @@ on:
   pull_request:
 
 jobs:
+  static:
+    runs-on: ubuntu-latest
+    name: Code style and static analysis
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Pint
+        run: vendor/bin/pint --test
+
+      - name: PHPStan (max level)
+        run: vendor/bin/phpstan analyse --no-progress
+
   test:
     runs-on: ubuntu-latest
 

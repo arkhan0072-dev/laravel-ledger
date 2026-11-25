@@ -6,6 +6,13 @@ use Arkhan\Ledger\AccountType;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property int $id
+ * @property string $code
+ * @property string $name
+ * @property AccountType $type
+ * @property string $currency ISO 4217 code, e.g. USD
+ */
 class Account extends Model
 {
     protected $table = 'ledger_accounts';
@@ -14,6 +21,7 @@ class Account extends Model
 
     protected $casts = ['type' => AccountType::class];
 
+    /** @return HasMany<EntryLine, $this> */
     public function lines(): HasMany
     {
         return $this->hasMany(EntryLine::class);

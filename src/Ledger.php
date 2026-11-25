@@ -3,10 +3,15 @@
 namespace Arkhan\Ledger;
 
 use Arkhan\Ledger\Exceptions\InvalidEntry;
+use Arkhan\Ledger\Models\EntryLine;
 use Arkhan\Ledger\Models\JournalEntry;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * @phpstan-type Row array{account_id: int, debit: int, credit: int}
+ */
 class Ledger
 {
     /**
@@ -22,7 +27,7 @@ class Ledger
         $currency = $this->validate($description, $lines);
         $description = trim($description);
         $rows = array_map(fn (Line $line) => [
-            'account_id' => $line->account->getKey(),
+            'account_id' => $line->account->id,
             'debit' => $line->debit,
             'credit' => $line->credit,
         ], $lines);
@@ -49,7 +54,7 @@ class Ledger
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
     public function reverse(JournalEntry $entry, ?string $description = null): JournalEntry
     {
-        $rows = $entry->lines->map(fn ($line) => [
+        $rows = $entry->lines->map(fn (EntryLine $line) => [
             'account_id' => $line->account_id,
             'debit' => $line->credit,
             'credit' => $line->debit,
@@ -84,6 +89,7 @@ class Ledger
             ->get();
 
         foreach ($entries as $e) {
+            /** @var object{id: int, line_count: int, debits: int|string, credits: int|string} $e */
             $problems[] = $e->line_count < 2
                 ? "Entry #{$e->id} has {$e->line_count} line(s); at least two are required."
                 : "Entry #{$e->id} does not balance: debits {$e->debits}, credits {$e->credits}.";
@@ -92,12 +98,13 @@ class Ledger
         $lines = DB::table('ledger_entry_lines as l')
             ->join('ledger_journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
             ->join('ledger_accounts as a', 'a.id', '=', 'l.account_id')
-            ->where(fn ($q) => $q->whereColumn('a.currency', '<>', 'e.currency')
+            ->where(fn (Builder $q) => $q->whereColumn('a.currency', '<>', 'e.currency')
                 ->orWhereRaw('(l.debit > 0) = (l.credit > 0)'))
             ->orderBy('l.id')
             ->get(['l.id', 'l.journal_entry_id', 'l.debit', 'l.credit', 'a.currency as account_currency', 'e.currency']);
 
         foreach ($lines as $l) {
+            /** @var object{id: int, journal_entry_id: int, debit: int, credit: int, account_currency: string, currency: string} $l */
             if (($l->debit > 0) === ($l->credit > 0)) {
                 $problems[] = "Line #{$l->id} in entry #{$l->journal_entry_id} must have exactly one positive side.";
             }
@@ -109,6 +116,10 @@ class Ledger
         return $problems;
     }
 
+    /**
+     * @param  array<int, Row>  $rows
+     * @param  array<string, mixed>  $attributes
+     */
     private function write(array $rows, array $attributes): JournalEntry
     {
         return DB::transaction(function () use ($rows, $attributes) {
@@ -120,14 +131,18 @@ class Ledger
     }
 
     /** Line order does not change an entry's meaning, so it does not change the hash. */
+    /** @param  array<int, Row>  $rows */
     private function hash(string $description, array $rows): string
     {
         usort($rows, fn ($a, $b) => [$a['account_id'], $a['debit'], $a['credit']] <=> [$b['account_id'], $b['debit'], $b['credit']]);
 
-        return hash('sha256', json_encode([$description, $rows]));
+        return hash('sha256', json_encode([$description, $rows], JSON_THROW_ON_ERROR));
     }
 
-    /** @return string the entry's currency */
+    /**
+     * @param  array<mixed>  $lines  checked at runtime: callers may pass anything
+     * @return string the entry's currency
+     */
     private function validate(string $description, array $lines): string
     {
         if (trim($description) === '') {
@@ -156,6 +171,6 @@ class Ledger
             throw new InvalidEntry("Debits ({$debits}) must equal credits ({$credits}).");
         }
 
-        return $currency;
+        return (string) $currency; // non-null: there are at least two lines
     }
 }
