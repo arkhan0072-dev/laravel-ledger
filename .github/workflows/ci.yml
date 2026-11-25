@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ["8.2", "8.3", "8.4"]
+        laravel: ["11.*", "12.*"]
+        db: [sqlite, pgsql]
+
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }} / ${{ matrix.db }}
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ledger
+          POSTGRES_PASSWORD: ledger
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ledger"
+          --health-interval 2s
+          --health-retries 30
+
+    env:
+      DB_CONNECTION: ${{ matrix.db == 'pgsql' && 'pgsql' || 'testing' }}
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: ledger
+      DB_USERNAME: ledger
+      DB_PASSWORD: ledger
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo_sqlite, pdo_pgsql
+          coverage: pcov
+
+      - run: composer require "illuminate/database:${{ matrix.laravel }}" "illuminate/support:${{ matrix.laravel }}" --no-update --no-interaction
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Tests (fails below 100% coverage)
+        run: vendor/bin/pest --coverage --min=100
