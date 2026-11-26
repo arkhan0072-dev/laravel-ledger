@@ -11,6 +11,7 @@ use Arkhan\Ledger\Models\JournalEntry;
 use DateTimeInterface;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -215,6 +216,45 @@ class Ledger
         return ['rows' => $rows, 'debits' => $debits, 'credits' => $credits];
     }
 
+    /** Lock every date up to and including $through: nothing can be posted or reversed into it. */
+    public function closePeriod(DateTimeInterface $through): void
+    {
+        $current = $this->closedThrough();
+        if ($current !== null && Carbon::instance($through)->toDateString() < $current->toDateString()) {
+            throw new InvalidArgumentException("The books are already closed through {$current->toDateString()}. Use reopenPeriod() to move the date back.");
+        }
+
+        $this->recordClose($through);
+    }
+
+    /** Move the closing date back to $through, or open every period when null. */
+    public function reopenPeriod(?DateTimeInterface $through = null): void
+    {
+        $current = $this->closedThrough();
+        if ($through !== null && ($current === null || Carbon::instance($through)->toDateString() > $current->toDateString())) {
+            throw new InvalidArgumentException('Reopening must move the closing date back from '.($current?->toDateString() ?? 'an open ledger').'.');
+        }
+
+        $this->recordClose($through);
+    }
+
+    /** The last closed date, or null when every period is open. */
+    public function closedThrough(): ?Carbon
+    {
+        $date = DB::table('ledger_period_closes')->orderByDesc('id')->value('closed_through');
+
+        return is_string($date) ? Carbon::parse($date)->startOfDay() : null;
+    }
+
+    private function recordClose(?DateTimeInterface $through): void
+    {
+        DB::table('ledger_period_closes')->insert([
+            'closed_through' => $through === null ? null : Carbon::instance($through)->toDateString(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function exchangeAccount(string $currency): Account
     {
         // The unique code makes concurrent first conversions share one account.
@@ -231,7 +271,14 @@ class Ledger
     private function write(array $rows, array $attributes): JournalEntry
     {
         return DB::transaction(function () use ($rows, $attributes) {
+            // Insert first: a retry of an entry stored before the close hits the unique key and gets it back.
             $entry = JournalEntry::create($attributes);
+            // shortcut: a posting racing closePeriod() on another connection can still land in the period
+            // being closed; lock the latest close row here if month-end runs alongside live postings.
+            $closed = $this->closedThrough();
+            if ($closed !== null && $entry->posted_at->toDateString() <= $closed->toDateString()) {
+                throw new InvalidEntry("The books are closed through {$closed->toDateString()}; date this entry after that.");
+            }
             $entry->lines()->createMany($rows);
 
             return $entry->load('lines');
