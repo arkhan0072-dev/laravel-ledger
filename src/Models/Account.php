@@ -6,6 +6,7 @@ use Arkhan\Ledger\AccountType;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use InvalidArgumentException;
 
 /**
@@ -14,6 +15,9 @@ use InvalidArgumentException;
  * @property string $name
  * @property AccountType $type
  * @property string $currency ISO 4217 code, e.g. USD
+ * @property string|null $owner_type
+ * @property int|string|null $owner_id
+ * @property-read Model|null $owner set when a model using HasLedger opened the account
  */
 class Account extends Model
 {
@@ -32,6 +36,12 @@ class Account extends Model
         }
 
         $this->attributes['currency'] = $code;
+    }
+
+    /** @return MorphTo<Model, $this> */
+    public function owner(): MorphTo
+    {
+        return $this->morphTo();
     }
 
     /** @return HasMany<EntryLine, $this> */
