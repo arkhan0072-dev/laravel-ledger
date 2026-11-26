@@ -6,6 +6,19 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-26
+
+### Added
+
+- `min_balance` on accounts: postings, reversals, transfers and captures that would take an account below it are refused. Money coming in is never refused. The accounts are locked `FOR UPDATE` before the check, so concurrent spends queue.
+- Holds: `Ledger::hold()`, `capture()` (all or part) and `release()`, with optional expiry, and `Account::availableBalance()`, which excludes held money.
+- `Ledger::transfer()`: move an amount between two accounts that grow on the same side, in one call.
+- Entry references: `post()` and `transfer()` take a `reference` model (an order, invoice or payment); reversals keep it. It is part of the idempotency check when given.
+
+### Upgrading
+
+Run `php artisan migrate` (adds `min_balance`, `reference` and `ledger_holds`). No code changes are needed: existing accounts have no minimum, and stored idempotency hashes still match.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added
@@ -69,7 +82,8 @@ First release.
 - `Ledger::verify()` and `php artisan ledger:verify` to find data changed outside the package.
 - Support for MySQL, PostgreSQL and SQLite on PHP 8.3+ and Laravel 12.
 
-[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.1.0...v0.2.0

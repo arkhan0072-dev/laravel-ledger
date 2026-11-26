@@ -11,6 +11,9 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Idempotent posting.** Send an idempotency key with a posting (an order ID, a webhook event ID) and a retry returns the stored entry instead of booking it twice.
 - **Append-only history, enforced by the database.** Posted entries and lines cannot be updated or deleted, not through Eloquent and not with raw SQL: triggers refuse it on MySQL, PostgreSQL and SQLite. Mistakes are cancelled with a reversal entry, like on paper.
 - **Unbalanced entries cannot commit on PostgreSQL.** A deferred constraint trigger checks every entry at commit, so even code that bypasses the package cannot leave the books out of balance.
+- **Wallet-safe balances.** Give an account a minimum balance and any posting that would overdraw it is refused, with the account row locked so concurrent spends cannot both pass.
+- **Holds.** Reserve money like a card authorization, then capture all or part of it, or release it. `availableBalance()` excludes held money.
+- **Transfers and references.** Move money between two accounts in one call, and link any entry to the order, invoice or payment it books.
 - **Ledger accounts for any model.** Add the `HasLedger` trait to a user, shop or merchant and call `$user->ledgerAccount('Wallet', AccountType::Liability, 'USD')`.
 - **Events.** `EntryPosted` and `EntryReversed` fire after the transaction commits, never for a rolled-back or retried posting.
 - **Multi-currency, with real decimal places.** Any number of currencies (one per entry); JPY has none, KWD has three, and reports print each correctly.
@@ -34,6 +37,7 @@ erDiagram
         string type "asset, liability, equity, income, expense"
         char currency "ISO 4217"
         morph owner "nullable, set by HasLedger"
+        bigint min_balance "nullable; postings may not go below"
     }
     ledger_journal_entries {
         string description
@@ -42,11 +46,19 @@ erDiagram
         string idempotency_key UK "nullable"
         char request_hash "sha256 of the posting"
         bigint reverses_id UK "nullable"
+        morph reference "nullable: the order, invoice or payment"
     }
     ledger_entry_lines {
         bigint account_id FK
         bigint debit "minor units"
         bigint credit "minor units"
+    }
+    ledger_holds {
+        bigint account_id FK
+        bigint amount "minor units"
+        string status "active, captured, released"
+        timestamp expires_at "nullable"
+        bigint journal_entry_id FK "the capture"
     }
     ledger_period_closes {
         date closed_through "nullable; latest row is the lock"
@@ -131,6 +143,41 @@ $wallet->owner;                                                           // the
 ```
 
 Each owner has one account per name and currency. Asking for an existing name with a different type throws.
+
+### Transfers and references
+
+```php
+$ledger->transfer('Alice pays Bob', $aliceWallet, $bobWallet, 1_200, reference: $order);
+
+$entry->reference;                                   // the order
+JournalEntry::whereMorphedTo('reference', $order)->get(); // every entry for it
+```
+
+A transfer takes money out of one account and into the other, each on its own side, so both accounts must grow on the same side (wallet to wallet, cash to bank). Reversals keep the original's reference.
+
+### Protect a balance
+
+```php
+$wallet = Account::create([..., 'type' => AccountType::Liability, 'min_balance' => 0]);      // never below zero
+$credit = Account::create([..., 'type' => AccountType::Liability, 'min_balance' => -50_000]); // $500.00 credit line
+
+$ledger->transfer('Purchase', $wallet, $sales, 999_999);
+// throws: Insufficient funds in Wallet: the available balance would be -9,949.99 USD, below the minimum of 0.00 USD.
+```
+
+Only money going out is checked; a top-up is never refused. Before checking, the posting locks the account rows (`SELECT ... FOR UPDATE`, in id order), so two concurrent spends queue instead of both seeing the old balance.
+
+### Hold, capture, release
+
+```php
+$hold = $ledger->hold($wallet, 2_500, 'Ride 881', expiresAt: now()->addHour());
+$wallet->availableBalance();  // balance minus active holds
+
+$ledger->capture($hold, $driverPayable, 1_840, 'Ride 881, final fare'); // charge less than held; the rest is freed
+$ledger->release($hold);                                                 // or free it all
+```
+
+A hold is not an accounting entry: it reserves money without moving it. Capturing posts a normal transfer and links it to the hold. A hold settles once, and an expired hold stops counting and cannot be captured.
 
 ### React to postings
 
@@ -257,6 +304,16 @@ $ledger->post('Wallet top-up', [Line::debit($stripe, 5_000), Line::credit($walle
 $ledger->post('Order #12 paid from wallet', [Line::debit($wallet, 1_800), Line::credit($sales, 1_800)]);
 
 $wallet->balance(); // 3200: $32.00 left to spend
+```
+
+### Ride-hailing: authorize, then charge the final fare
+
+```php
+$wallet = $rider->ledgerAccount('Wallet', AccountType::Liability, 'USD');
+$wallet->update(['min_balance' => 0]);
+
+$hold = $ledger->hold($wallet, 2_500, 'Ride 881', now()->addHour()); // $25.00 estimate
+$ledger->capture($hold, $driverPayable, 1_840, 'Ride 881, final fare'); // $18.40 charged, $6.60 freed
 ```
 
 ### Marketplace sale with fees, then a payout

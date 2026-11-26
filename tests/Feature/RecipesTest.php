@@ -68,3 +68,21 @@ it('refunds a whole charge by reversing it', function () {
 
     expect($this->stripe->balance())->toBe(0)->and($this->sales->balance())->toBe(0);
 });
+
+it('authorises a ride, then charges the final fare', function () {
+    $rider = Shop::create(['name' => 'Rider 4']);
+    $wallet = $rider->ledgerAccount('Wallet', AccountType::Liability, 'USD');
+    $wallet->update(['min_balance' => 0]);
+    $driver = Shop::create(['name' => 'Driver 2'])->ledgerAccount('Payable', AccountType::Liability, 'USD');
+    $this->ledger->post('Top-up', [Line::debit($this->stripe, 3_000), Line::credit($wallet, 3_000)]);
+
+    $hold = $this->ledger->hold($wallet, 2_500, 'Ride 881', now()->addHour());
+    $spendable = $wallet->availableBalance();
+    $entry = $this->ledger->capture($hold, $driver, 1_840, 'Ride 881, final fare');
+
+    expect($spendable)->toBe(500)
+        ->and($wallet->balance())->toBe(1_160)
+        ->and($wallet->availableBalance())->toBe(1_160)
+        ->and($driver->balance())->toBe(1_840)
+        ->and($entry->description)->toBe('Ride 881, final fare');
+});
