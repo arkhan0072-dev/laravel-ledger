@@ -7,15 +7,8 @@ use Arkhan\Ledger\Ledger;
 use Arkhan\Ledger\Line;
 use Arkhan\Ledger\Models\Account;
 use Arkhan\Ledger\Tests\Fixtures\Shop;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
 beforeEach(function () {
-    Schema::create('shops', function (Blueprint $table) {
-        $table->id();
-        $table->string('name');
-        $table->timestamps();
-    });
     $this->ledger = app(Ledger::class);
     $this->stripe = Account::create(['code' => '1100', 'name' => 'Stripe balance', 'type' => AccountType::Asset, 'currency' => 'USD']);
     $this->sales = Account::create(['code' => '4000', 'name' => 'Sales', 'type' => AccountType::Income, 'currency' => 'USD']);

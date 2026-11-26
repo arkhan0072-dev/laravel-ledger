@@ -19,5 +19,7 @@ abstract class TestCase extends Orchestra
     {
         // DB_CONNECTION=pgsql in CI runs the same tests against PostgreSQL.
         $app['config']->set('database.default', env('DB_CONNECTION', 'testing'));
+        // Test-only tables join the one migrate:fresh run, outside any test transaction.
+        $app->afterResolving('migrator', fn ($migrator) => $migrator->path(__DIR__.'/database/migrations'));
     }
 }

@@ -5,15 +5,8 @@ use Arkhan\Ledger\Ledger;
 use Arkhan\Ledger\Line;
 use Arkhan\Ledger\Models\Account;
 use Arkhan\Ledger\Tests\Fixtures\Shop;
-use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
 
 beforeEach(function () {
-    Schema::create('shops', function (Blueprint $table) {
-        $table->id();
-        $table->string('name');
-        $table->timestamps();
-    });
     $this->shop = Shop::create(['name' => 'Corner Shop']);
 });
 
