@@ -397,7 +397,7 @@ $ledger->reverse($charge, 'Refund of ch_4Zx');
 
 ## Works with laravel-zatca (Saudi e-invoicing)
 
-Selling in Saudi Arabia? [laravel-zatca](https://github.com/arkhan0072-dev/laravel-zatca), from the same author, issues ZATCA (Fatoora) Phase 2 e-invoices: onboarding, a concurrency-safe invoice chain, signed XML with QR codes, and exactly-once reporting and clearance. Use the two together and every legal invoice is also in your books, once:
+Each package works on its own; use them together for the most. Selling in Saudi Arabia? [laravel-zatca](https://github.com/arkhan0072-dev/laravel-zatca), from the same author, issues ZATCA (Fatoora) Phase 2 e-invoices: onboarding, a concurrency-safe invoice chain, signed XML with QR codes, and exactly-once reporting and clearance. Use the two together and every legal invoice is also in your books, once:
 
 ```php
 $invoice = app(\Arkhan\Zatca\Zatca::class)->issue('pos-1', $data);   // the legal invoice, sent to ZATCA

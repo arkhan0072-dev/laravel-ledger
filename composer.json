@@ -23,6 +23,9 @@
         "orchestra/testbench": "^10.0|^11.0",
         "pestphp/pest": "^3.0|^4.0"
     },
+    "suggest": {
+        "arkhan0072-dev/laravel-zatca": "Issue ZATCA (Saudi Arabia) e-invoices and book them in the ledger (see the README section)."
+    },
     "autoload": {
         "psr-4": { "Arkhan\\Ledger\\": "src/" }
     },
