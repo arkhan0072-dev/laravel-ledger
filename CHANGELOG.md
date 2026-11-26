@@ -25,7 +25,7 @@ All notable changes to this package are documented here. The format follows
 
 ### Upgrading
 
-Run `php artisan migrate`. Accounts created in 0.1 with a lower-case currency (`usd`) should be updated to upper case before upgrading. On MySQL with binary logging, set `log_bin_trust_function_creators = 1` first, or the triggers are skipped with a logged warning.
+Run `php artisan migrate`. On MySQL with binary logging, set `log_bin_trust_function_creators = 1` first, or the triggers are skipped with a logged warning.
 
 ## [0.1.0] - 2026-11-26
 
