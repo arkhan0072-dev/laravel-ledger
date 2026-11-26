@@ -92,7 +92,7 @@ return new class extends Migration
             if (($e->errorInfo[1] ?? null) !== 1419) {
                 throw $e;
             }
-            Log::warning('laravel-ledger: MySQL immutability triggers were not installed because this database user may not create triggers while binary logging is on. Set log_bin_trust_function_creators=1 (or grant SUPER) and run the ledger guards migration again to enable them.');
+            Log::warning('laravel-ledger: MySQL immutability triggers were not installed because this database user may not create triggers while binary logging is on. To enable them, set log_bin_trust_function_creators=1 (or grant SUPER), then run: php artisan migrate:refresh --path=vendor/arkhan0072-dev/laravel-ledger/database/migrations/2026_11_27_000001_add_ledger_database_guards.php');
         }
     }
 

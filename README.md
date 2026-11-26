@@ -195,7 +195,11 @@ The same check is available in code as `$ledger->verify()`, which returns the li
 
 A migration adds triggers that refuse `UPDATE` and `DELETE` on `ledger_journal_entries` and `ledger_entry_lines`. On PostgreSQL a deferred constraint trigger also refuses to commit any entry that does not balance or has fewer than two lines, whoever wrote it.
 
-On MySQL with binary logging on (the default, and usual on managed databases), a user without `SUPER` may only create triggers when `log_bin_trust_function_creators = 1`. Without it the migration still succeeds, skips the MySQL triggers and logs a warning; set the variable and run the migration again to add them. The Eloquent guards and `ledger:verify` work either way.
+On MySQL with binary logging on (the default, and usual on managed databases), a user without `SUPER` may only create triggers when `log_bin_trust_function_creators = 1`. Without it the migration still succeeds, skips the MySQL triggers and logs a warning. To add them later, set the variable and run:
+
+```bash
+php artisan migrate:refresh --path=vendor/arkhan0072-dev/laravel-ledger/database/migrations/2026_11_27_000001_add_ledger_database_guards.php
+``` The Eloquent guards and `ledger:verify` work either way.
 
 ## Recipes
 

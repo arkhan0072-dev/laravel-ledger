@@ -6,6 +6,21 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-26
+
+### Fixed
+
+- Posting on PostgreSQL no longer slows down as the ledger grows. Entry lines are now indexed by journal entry; the commit-time balance check and loading an entry's lines used to scan the whole lines table.
+- The MySQL warning shown when triggers cannot be created now gives the exact command that installs them later. Re-running `php artisan migrate` does not, because the migration is already recorded.
+
+### Changed
+
+- Package metadata: clearer description, more keywords, support links, and the author's profile instead of an email address.
+
+### Upgrading
+
+Run `php artisan migrate` to add the index. No code changes are needed.
+
 ## [0.2.0] - 2026-11-26
 
 ### Added
@@ -42,6 +57,7 @@ First release.
 - `Ledger::verify()` and `php artisan ledger:verify` to find data changed outside the package.
 - Support for MySQL, PostgreSQL and SQLite on PHP 8.3+ and Laravel 12.
 
-[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arkhan0072-dev/laravel-ledger/releases/tag/v0.1.0

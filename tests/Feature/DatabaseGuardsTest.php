@@ -7,6 +7,7 @@ use Arkhan\Ledger\Models\Account;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 // These guards hold even for code that skips the package and writes SQL directly.
 
@@ -33,6 +34,10 @@ it('refuses raw SQL that changes a posted entry', function () {
 it('refuses raw SQL that deletes a posted entry', function () {
     DB::table('ledger_journal_entries')->where('id', $this->entry->id)->delete();
 })->throws(QueryException::class, 'immutable');
+
+it('indexes lines by entry, so the commit-time check does not scan the whole table', function () {
+    expect(Schema::hasIndex('ledger_entry_lines', ['journal_entry_id']))->toBeTrue();
+});
 
 // PostgreSQL checks each entry at commit. The tests never commit, so they ask for the check now.
 describe('on PostgreSQL', function () {
@@ -81,7 +86,7 @@ describe('on MySQL without trigger rights', function () {
     it('installs without the guards and says how to enable them', function () {
         ($this->runGuards)(1419);
 
-        Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => str_contains($message, 'log_bin_trust_function_creators'));
+        Log::shouldHaveReceived('warning')->once()->withArgs(fn (string $message) => str_contains($message, 'log_bin_trust_function_creators') && str_contains($message, 'php artisan migrate:refresh --path='));
     });
 
     it('still fails on any other error', function () {
