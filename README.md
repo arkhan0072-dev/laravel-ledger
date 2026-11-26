@@ -395,6 +395,26 @@ $ledger->post('Stripe refund re_9Lm', [Line::debit($sales, 1_000), Line::credit(
 $ledger->reverse($charge, 'Refund of ch_4Zx');
 ```
 
+## Works with laravel-zatca (Saudi e-invoicing)
+
+Selling in Saudi Arabia? [laravel-zatca](https://github.com/arkhan0072-dev/laravel-zatca), from the same author, issues ZATCA (Fatoora) Phase 2 e-invoices: onboarding, a concurrency-safe invoice chain, signed XML with QR codes, and exactly-once reporting and clearance. Use the two together and every legal invoice is also in your books, once:
+
+```php
+$invoice = app(\Arkhan\Zatca\Zatca::class)->issue('pos-1', $data);   // the legal invoice, sent to ZATCA
+
+$ledger->post("ZATCA invoice {$data['id']}", [
+    Line::debit($cash, 23_115),        // 231.15 SAR received
+    Line::credit($sales, 20_100),      // 201.00 SAR earned
+    Line::credit($vatPayable, 3_015),  // 30.15 SAR owed to ZATCA
+], idempotencyKey: "zatca:{$invoice->uuid}", reference: $invoice);
+```
+
+- The invoice UUID as idempotency key books each invoice once, even when a job retries.
+- `reference` links the entry to its ZATCA invoice, and `$vatPayable->balance()`, `incomeStatement()` and `balanceSheet()` turn your invoices into the figures you file.
+- Close each VAT period with `closePeriod()` once it is filed, so nothing can be posted into it afterwards.
+
+The full recipe runs as a test in laravel-zatca.
+
 ## Choosing a package
 
 | Package | Pick it when |
