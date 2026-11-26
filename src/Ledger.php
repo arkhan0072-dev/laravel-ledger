@@ -5,6 +5,7 @@ namespace Arkhan\Ledger;
 use Arkhan\Ledger\Events\EntryPosted;
 use Arkhan\Ledger\Events\EntryReversed;
 use Arkhan\Ledger\Exceptions\InvalidEntry;
+use Arkhan\Ledger\Models\Account;
 use Arkhan\Ledger\Models\EntryLine;
 use Arkhan\Ledger\Models\JournalEntry;
 use DateTimeInterface;
@@ -57,6 +58,27 @@ class Ledger
         event(new EntryPosted($entry));
 
         return $entry;
+    }
+
+    /**
+     * Exchange money between currencies: one balanced entry in each currency, both or neither.
+     * Each side goes through that currency's "FX-<code>" exchange account, opened on first use,
+     * whose balances are what fxGainLoss() values.
+     *
+     * @return array{JournalEntry, JournalEntry} the entry in $from's currency, then the one in $to's
+     */
+    public function convert(string $description, Account $from, int $fromAmount, Account $to, int $toAmount, ?string $idempotencyKey = null, ?DateTimeInterface $postedAt = null): array
+    {
+        if ($from->currency === $to->currency) {
+            throw new InvalidEntry("A conversion needs two different currencies, got {$from->currency} and {$to->currency}.");
+        }
+        $sold = Line::credit($from, $fromAmount);
+        $bought = Line::debit($to, $toAmount);
+
+        return DB::transaction(fn () => [
+            $this->post($description, [$sold, Line::debit($this->exchangeAccount($from->currency), $fromAmount)], $idempotencyKey === null ? null : "{$idempotencyKey}:sold", $postedAt),
+            $this->post($description, [$bought, Line::credit($this->exchangeAccount($to->currency), $toAmount)], $idempotencyKey === null ? null : "{$idempotencyKey}:bought", $postedAt),
+        ]);
     }
 
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
@@ -161,6 +183,15 @@ class Ledger
         }
 
         return ['rows' => $rows, 'debits' => $debits, 'credits' => $credits];
+    }
+
+    private function exchangeAccount(string $currency): Account
+    {
+        // The unique code makes concurrent first conversions share one account.
+        return Account::firstOrCreate(
+            ['code' => "FX-{$currency}"],
+            ['name' => "Currency exchange {$currency}", 'type' => AccountType::Equity, 'currency' => $currency],
+        );
     }
 
     /**
