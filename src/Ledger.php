@@ -23,6 +23,9 @@ use InvalidArgumentException;
  */
 class Ledger
 {
+    /** Idempotency key prefix of year-end closing entries. */
+    private const YEAR_END = 'ledger-year-end:';
+
     /**
      * Record a journal entry. It is stored only if it balances, all in one transaction.
      *
@@ -334,7 +337,8 @@ class Ledger
      */
     public function incomeStatement(string $currency, ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): array
     {
-        $sections = $this->sections($currency, $from, $to === null ? null : Carbon::instance($to)->endOfDay());
+        // Closing entries move the year's result into equity; counting them would show every closed year as zero.
+        $sections = $this->sections($currency, $from, $to === null ? null : Carbon::instance($to)->endOfDay(), withoutYearEnd: true);
         $income = array_sum(array_column($sections['income'], 'amount'));
         $expenses = array_sum(array_column($sections['expense'], 'amount'));
 
@@ -368,14 +372,53 @@ class Ledger
     }
 
     /**
+     * Close a year: one entry, dated $yearEnd, that brings every income and expense account in
+     * $currency to zero and puts the net result in $retainedEarnings. Closing the same year again
+     * returns that entry; with nothing to close it returns null. Lock the period separately.
+     */
+    public function closeYear(string $currency, DateTimeInterface $yearEnd, Account $retainedEarnings): ?JournalEntry
+    {
+        $currency = strtoupper($currency);
+        if ($retainedEarnings->type !== AccountType::Equity) {
+            throw new InvalidEntry("Retained earnings must be an equity account, got {$retainedEarnings->type->value}.");
+        }
+        if ($retainedEarnings->currency !== $currency) {
+            throw new InvalidEntry("Retained earnings must be in {$currency}, got {$retainedEarnings->currency}.");
+        }
+        $end = Carbon::instance($yearEnd)->endOfDay();
+        $key = self::YEAR_END."{$currency}:{$end->toDateString()}";
+        $closed = JournalEntry::where('idempotency_key', $key)->first();
+        if ($closed !== null) {
+            return $closed->load('lines');
+        }
+
+        $results = array_filter($this->netByAccount($currency, null, $end), fn (array $a) => in_array($a['type'], ['income', 'expense'], true));
+        if ($results === []) {
+            return null;
+        }
+        $lines = [];
+        $net = 0; // debits minus credits across income and expenses: positive is a loss
+        foreach ($results as $a) {
+            $account = Account::findOrFail($a['id']);
+            $lines[] = $a['net'] > 0 ? Line::credit($account, $a['net']) : Line::debit($account, -$a['net']);
+            $net += $a['net'];
+        }
+        if ($net !== 0) {
+            $lines[] = $net > 0 ? Line::debit($retainedEarnings, $net) : Line::credit($retainedEarnings, -$net);
+        }
+
+        return $this->post("Year-end close {$end->toDateString()}", $lines, $key, $end);
+    }
+
+    /**
      * Accounts grouped by type, each amount on its type's normal side.
      *
      * @return array<string, list<Report>> keyed by AccountType value
      */
-    private function sections(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to): array
+    private function sections(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to, bool $withoutYearEnd = false): array
     {
         $sections = array_fill_keys(array_map(fn (AccountType $t) => $t->value, AccountType::cases()), []);
-        foreach ($this->netByAccount($currency, $from, $to) as $a) {
+        foreach ($this->netByAccount($currency, $from, $to, $withoutYearEnd) as $a) {
             $type = AccountType::from($a['type']);
             $sections[$a['type']][] = ['code' => $a['code'], 'name' => $a['name'], 'type' => $a['type'], 'amount' => $type->isDebitNormal() ? $a['net'] : -$a['net']];
         }
@@ -386,9 +429,9 @@ class Ledger
     /**
      * Debits minus credits per account in one currency, accounts with activity only, by code.
      *
-     * @return list<array{code: string, name: string, type: string, net: int}>
+     * @return list<array{id: int, code: string, name: string, type: string, net: int}>
      */
-    private function netByAccount(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to): array
+    private function netByAccount(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to, bool $withoutYearEnd = false): array
     {
         $accounts = DB::table('ledger_accounts as a')
             ->join('ledger_entry_lines as l', 'l.account_id', '=', 'a.id')
@@ -396,16 +439,17 @@ class Ledger
             ->where('a.currency', strtoupper($currency))
             ->when($from, fn (Builder $q, DateTimeInterface $from) => $q->where('e.posted_at', '>=', Carbon::instance($from)->startOfDay()))
             ->when($to, fn (Builder $q) => $q->where('e.posted_at', '<=', $to))
+            ->when($withoutYearEnd, fn (Builder $q) => $q->where(fn (Builder $q) => $q->whereNull('e.idempotency_key')->orWhere('e.idempotency_key', 'not like', self::YEAR_END.'%')))
             ->groupBy('a.id', 'a.code', 'a.name', 'a.type')
             ->orderBy('a.code')
-            ->selectRaw('a.code, a.name, a.type, sum(l.debit) - sum(l.credit) as net')
+            ->selectRaw('a.id, a.code, a.name, a.type, sum(l.debit) - sum(l.credit) as net')
             ->get();
 
         $rows = [];
         foreach ($accounts as $a) {
-            /** @var object{code: string, name: string, type: string, net: int|string} $a */
+            /** @var object{id: int|string, code: string, name: string, type: string, net: int|string} $a */
             if ((int) $a->net !== 0) {
-                $rows[] = ['code' => $a->code, 'name' => $a->name, 'type' => $a->type, 'net' => (int) $a->net];
+                $rows[] = ['id' => (int) $a->id, 'code' => $a->code, 'name' => $a->name, 'type' => $a->type, 'net' => (int) $a->net];
             }
         }
 
