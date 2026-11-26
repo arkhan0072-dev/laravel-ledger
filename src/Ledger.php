@@ -67,6 +67,22 @@ class Ledger
     }
 
     /**
+     * Move $amount out of one account and into another, each on its own normal side,
+     * e.g. wallet to wallet or cash to bank.
+     */
+    public function transfer(string $description, Account $from, Account $to, int $amount, ?string $idempotencyKey = null, ?DateTimeInterface $postedAt = null, ?Model $reference = null): JournalEntry
+    {
+        if ($from->type->isDebitNormal() !== $to->type->isDebitNormal()) {
+            throw new InvalidEntry("Cannot transfer between {$from->type->value} and {$to->type->value} accounts; post the entry with explicit lines instead.");
+        }
+        $lines = $to->type->isDebitNormal()
+            ? [Line::debit($to, $amount), Line::credit($from, $amount)]
+            : [Line::debit($from, $amount), Line::credit($to, $amount)];
+
+        return $this->post($description, $lines, $idempotencyKey, $postedAt, $reference);
+    }
+
+    /**
      * Exchange money between currencies: one balanced entry in each currency, both or neither.
      * Each side goes through that currency's "FX-<code>" exchange account, opened on first use,
      * whose balances are what fxGainLoss() values.
