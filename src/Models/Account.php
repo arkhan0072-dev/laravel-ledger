@@ -15,6 +15,7 @@ use InvalidArgumentException;
  * @property string $name
  * @property AccountType $type
  * @property string $currency ISO 4217 code, e.g. USD
+ * @property int|null $min_balance lowest balance a posting may leave, in minor units; null for no limit
  * @property string|null $owner_type
  * @property int|string|null $owner_id
  * @property-read Model|null $owner set when a model using HasLedger opened the account
@@ -23,9 +24,9 @@ class Account extends Model
 {
     protected $table = 'ledger_accounts';
 
-    protected $fillable = ['code', 'name', 'type', 'currency'];
+    protected $fillable = ['code', 'name', 'type', 'currency', 'min_balance'];
 
-    protected $casts = ['type' => AccountType::class];
+    protected $casts = ['type' => AccountType::class, 'min_balance' => 'integer'];
 
     /** Currency codes are stored upper-case and must be three letters, so "usd" and "USD" never become two currencies. */
     public function setCurrencyAttribute(string $value): void

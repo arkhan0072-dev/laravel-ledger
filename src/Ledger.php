@@ -293,6 +293,15 @@ class Ledger
     private function write(array $rows, array $attributes): JournalEntry
     {
         return DB::transaction(function () use ($rows, $attributes) {
+            // Lock accounts with a minimum before reading their balance, in id order so concurrent postings
+            // queue instead of deadlocking; a second spend waits and then sees the first one's lines.
+            $net = [];
+            foreach ($rows as $row) {
+                $net[$row['account_id']] = ($net[$row['account_id']] ?? 0) + $row['debit'] - $row['credit'];
+            }
+            $guarded = Account::whereKey(array_keys($net))->whereNotNull('min_balance')->orderBy('id')->lockForUpdate()->get()
+                ->filter(fn (Account $a) => $a->type->isDebitNormal() ? $net[$a->id] < 0 : $net[$a->id] > 0);
+
             // Insert first: a retry of an entry stored before the close hits the unique key and gets it back.
             $entry = JournalEntry::create($attributes);
             // shortcut: a posting racing closePeriod() on another connection can still land in the period
@@ -302,6 +311,14 @@ class Ledger
                 throw new InvalidEntry("The books are closed through {$closed->toDateString()}; date this entry after that.");
             }
             $entry->lines()->createMany($rows);
+
+            foreach ($guarded as $account) {
+                $balance = $account->balance();
+                if ($balance < (int) $account->min_balance) {
+                    $format = fn (int $minor) => Currency::format($minor, $account->currency)." {$account->currency}";
+                    throw new InvalidEntry("Insufficient funds in {$account->name}: the balance would be {$format($balance)}, below the minimum of {$format((int) $account->min_balance)}.");
+                }
+            }
 
             return $entry->load('lines');
         });
