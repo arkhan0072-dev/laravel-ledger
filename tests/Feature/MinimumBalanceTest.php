@@ -19,7 +19,7 @@ beforeEach(function () {
 
 it('refuses spending more than the balance', function () {
     ($this->spend)(5_001);
-})->throws(InvalidEntry::class, 'Insufficient funds in Wallet: the balance would be -0.01 USD, below the minimum of 0.00 USD.');
+})->throws(InvalidEntry::class, 'Insufficient funds in Wallet: the available balance would be -0.01 USD, below the minimum of 0.00 USD.');
 
 it('stores nothing for a refused spend', function () {
     expect(fn () => ($this->spend)(9_000))->toThrow(InvalidEntry::class);

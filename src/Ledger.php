@@ -7,6 +7,7 @@ use Arkhan\Ledger\Events\EntryReversed;
 use Arkhan\Ledger\Exceptions\InvalidEntry;
 use Arkhan\Ledger\Models\Account;
 use Arkhan\Ledger\Models\EntryLine;
+use Arkhan\Ledger\Models\Hold;
 use Arkhan\Ledger\Models\JournalEntry;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
@@ -80,6 +81,67 @@ class Ledger
             : [Line::debit($from, $amount), Line::credit($to, $amount)];
 
         return $this->post($description, $lines, $idempotencyKey, $postedAt, $reference);
+    }
+
+    /** Reserve money on an account without moving it, like a card authorization. */
+    public function hold(Account $account, int $amount, string $description, ?DateTimeInterface $expiresAt = null): Hold
+    {
+        Line::positive($amount);
+
+        return DB::transaction(function () use ($account, $amount, $description, $expiresAt) {
+            // Same lock as postings, so a hold and a spend cannot both take the last of the money.
+            $locked = Account::whereKey($account->id)->lockForUpdate()->firstOrFail();
+            if ($locked->min_balance !== null) {
+                $free = $locked->availableBalance() - $locked->min_balance;
+                if ($amount > $free) {
+                    $format = fn (int $minor) => Currency::format($minor, $locked->currency)." {$locked->currency}";
+                    throw new InvalidEntry("Insufficient funds in {$locked->name}: {$format($free)} available, {$format($amount)} requested.");
+                }
+            }
+
+            return Hold::create(['account_id' => $locked->id, 'status' => 'active', 'amount' => $amount, 'description' => $description, 'expires_at' => $expiresAt]);
+        });
+    }
+
+    /** Settle a hold by transferring all of it, or less, to $to; any rest is freed. */
+    public function capture(Hold $hold, Account $to, ?int $amount = null, ?string $description = null): JournalEntry
+    {
+        return DB::transaction(function () use ($hold, $to, $amount, $description) {
+            $locked = $this->settleable($hold);
+            $account = Account::findOrFail($locked->account_id);
+            $amount ??= $locked->amount;
+            if ($amount > $locked->amount) {
+                $currency = $account->currency;
+                throw new InvalidEntry('Cannot capture '.Currency::format($amount, $currency)." {$currency} from a hold of ".Currency::format($locked->amount, $currency)." {$currency}.");
+            }
+
+            // Mark it first, so the transfer's funds check no longer counts this hold as reserved.
+            $locked->update(['status' => 'captured']);
+            $entry = $this->transfer($description ?? $locked->description, $account, $to, $amount);
+            $locked->update(['journal_entry_id' => $entry->id]);
+
+            return $entry;
+        });
+    }
+
+    /** Free a hold's money without moving it. */
+    public function release(Hold $hold): void
+    {
+        DB::transaction(fn () => $this->settleable($hold)->update(['status' => 'released']));
+    }
+
+    /** The hold, locked, if it can still be captured or released. */
+    private function settleable(Hold $hold): Hold
+    {
+        $locked = Hold::whereKey($hold->id)->lockForUpdate()->firstOrFail();
+        if ($locked->status !== 'active') {
+            throw new InvalidEntry("Hold #{$locked->id} was already {$locked->status}.");
+        }
+        if ($locked->isExpired()) {
+            throw new InvalidEntry("Hold #{$locked->id} expired at {$locked->expires_at?->format('Y-m-d H:i')}.");
+        }
+
+        return $locked;
     }
 
     /**
@@ -313,10 +375,10 @@ class Ledger
             $entry->lines()->createMany($rows);
 
             foreach ($guarded as $account) {
-                $balance = $account->balance();
-                if ($balance < (int) $account->min_balance) {
+                $available = $account->availableBalance(); // held money is already spoken for
+                if ($available < (int) $account->min_balance) {
                     $format = fn (int $minor) => Currency::format($minor, $account->currency)." {$account->currency}";
-                    throw new InvalidEntry("Insufficient funds in {$account->name}: the balance would be {$format($balance)}, below the minimum of {$format((int) $account->min_balance)}.");
+                    throw new InvalidEntry("Insufficient funds in {$account->name}: the available balance would be {$format($available)}, below the minimum of {$format((int) $account->min_balance)}.");
                 }
             }
 

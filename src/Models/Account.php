@@ -62,4 +62,15 @@ class Account extends Model
 
         return $this->type->isDebitNormal() ? $net : -$net;
     }
+
+    /** Balance minus money reserved by active, unexpired holds. */
+    public function availableBalance(): int
+    {
+        $held = (int) $this->hasMany(Hold::class)
+            ->where('status', 'active')
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->sum('amount');
+
+        return $this->balance() - $held;
+    }
 }

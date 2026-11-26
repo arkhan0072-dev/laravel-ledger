@@ -24,7 +24,8 @@ final class Line
         return new self($account, 0, self::positive($amount));
     }
 
-    private static function positive(int $amount): int
+    /** @internal also validates hold amounts */
+    public static function positive(int $amount): int
     {
         if ($amount <= 0) {
             throw new InvalidEntry('Line amounts must be positive integers (minor units).');
