@@ -2,6 +2,7 @@
 
 namespace Arkhan\Ledger\Console;
 
+use Arkhan\Ledger\Currency;
 use Arkhan\Ledger\Ledger;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
@@ -24,10 +25,10 @@ class TrialBalanceCommand extends Command
         $tb = $ledger->trialBalance($currency, $asOf);
 
         $rows = array_map(
-            fn (array $r) => [$r['code'], $r['name'], $r['type'], $this->money($r['debit']), $this->money($r['credit'])],
+            fn (array $r) => [$r['code'], $r['name'], $r['type'], $this->money($currency, $r['debit']), $this->money($currency, $r['credit'])],
             $tb['rows'],
         );
-        $rows[] = ['', 'Total', '', $this->money($tb['debits']), $this->money($tb['credits'])];
+        $rows[] = ['', 'Total', '', $this->money($currency, $tb['debits']), $this->money($currency, $tb['credits'])];
         $this->table(['Code', 'Account', 'Type', 'Debit', 'Credit'], $rows);
 
         $label = "Trial balance for {$currency} as of {$asOf->toDateString()}";
@@ -37,14 +38,13 @@ class TrialBalanceCommand extends Command
             return self::SUCCESS;
         }
 
-        $this->error("{$label}: debits {$this->money($tb['debits'])} and credits {$this->money($tb['credits'])} differ. Run ledger:verify.");
+        $this->error("{$label}: debits {$this->money($currency, $tb['debits'])} and credits {$this->money($currency, $tb['credits'])} differ. Run ledger:verify.");
 
         return self::FAILURE;
     }
 
-    // shortcut: assumes two decimal places; currencies like JPY (0) or KWD (3) print shifted, add a minor-unit table when needed.
-    private function money(int $minor): string
+    private function money(string $currency, int $minor): string
     {
-        return $minor === 0 ? '' : number_format($minor / 100, 2);
+        return $minor === 0 ? '' : Currency::format($minor, $currency);
     }
 }

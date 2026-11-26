@@ -57,3 +57,11 @@ it('knows which side increases each account type', function (AccountType $type, 
     [AccountType::Equity, false],
     [AccountType::Income, false],
 ]);
+
+it('stores currency codes in upper case', function () {
+    expect(Account::create(['code' => '1001', 'name' => 'Cash', 'type' => AccountType::Asset, 'currency' => 'usd'])->currency)->toBe('USD');
+});
+
+it('refuses a currency code that is not three letters', function (string $currency) {
+    Account::create(['code' => '1002', 'name' => 'Cash', 'type' => AccountType::Asset, 'currency' => $currency]);
+})->with(['US', 'DOLLAR', '12A', ''])->throws(InvalidArgumentException::class, 'Currency must be a three-letter ISO 4217 code');

@@ -6,6 +6,7 @@ use Arkhan\Ledger\AccountType;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use InvalidArgumentException;
 
 /**
  * @property int $id
@@ -21,6 +22,17 @@ class Account extends Model
     protected $fillable = ['code', 'name', 'type', 'currency'];
 
     protected $casts = ['type' => AccountType::class];
+
+    /** Currency codes are stored upper-case and must be three letters, so "usd" and "USD" never become two currencies. */
+    public function setCurrencyAttribute(string $value): void
+    {
+        $code = strtoupper(trim($value));
+        if (preg_match('/^[A-Z]{3}$/', $code) !== 1) {
+            throw new InvalidArgumentException("Currency must be a three-letter ISO 4217 code, got \"{$value}\".");
+        }
+
+        $this->attributes['currency'] = $code;
+    }
 
     /** @return HasMany<EntryLine, $this> */
     public function lines(): HasMany

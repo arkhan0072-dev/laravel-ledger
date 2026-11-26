@@ -117,3 +117,17 @@ it('leaves out accounts whose activity nets to zero', function () {
 
     expect($this->ledger->trialBalance('USD')['rows'])->toBe([]);
 });
+
+it('prints amounts with the currency\'s own decimal places', function () {
+    $yen = Account::create(['code' => '1100', 'name' => 'Yen cash', 'type' => AccountType::Asset, 'currency' => 'JPY']);
+    $yenSales = Account::create(['code' => '4100', 'name' => 'Yen sales', 'type' => AccountType::Income, 'currency' => 'JPY']);
+    $this->ledger->post('Sale', [Line::debit($yen, 15000), Line::credit($yenSales, 15000)]);
+
+    $this->artisan('ledger:trial-balance', ['currency' => 'JPY'])
+        ->expectsTable(['Code', 'Account', 'Type', 'Debit', 'Credit'], [
+            ['1100', 'Yen cash', 'asset', '15,000', ''],
+            ['4100', 'Yen sales', 'income', '', '15,000'],
+            ['', 'Total', '', '15,000', '15,000'],
+        ])
+        ->assertExitCode(0);
+});
