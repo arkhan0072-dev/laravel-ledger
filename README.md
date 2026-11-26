@@ -9,7 +9,11 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Balanced entries only.** Entries with unequal debits and credits, fewer than two lines, mixed currencies or non-positive amounts are rejected with a clear message.
 - **Integer money.** Amounts are minor units (cents), so rounding errors from floats never reach the books.
 - **Idempotent posting.** Send an idempotency key with a posting (an order ID, a webhook event ID) and a retry returns the stored entry instead of booking it twice.
-- **Append-only history.** Posted entries and lines cannot be updated or deleted; mistakes are cancelled with a reversal entry, like on paper.
+- **Append-only history, enforced by the database.** Posted entries and lines cannot be updated or deleted, not through Eloquent and not with raw SQL: triggers refuse it on MySQL, PostgreSQL and SQLite. Mistakes are cancelled with a reversal entry, like on paper.
+- **Unbalanced entries cannot commit on PostgreSQL.** A deferred constraint trigger checks every entry at commit, so even code that bypasses the package cannot leave the books out of balance.
+- **Ledger accounts for any model.** Add the `HasLedger` trait to a user, shop or merchant and call `$user->ledgerAccount('Wallet', AccountType::Liability, 'USD')`.
+- **Events.** `EntryPosted` and `EntryReversed` fire after the transaction commits, never for a rolled-back or retried posting.
+- **Multi-currency, with real decimal places.** Any number of currencies (one per entry); JPY has none, KWD has three, and reports print each correctly.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
 - **Entry dates and reports.** Book an entry on its accounting date, read any balance as of a past date, and print a trial balance.
 - **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4 and Laravel 12-13, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
@@ -27,10 +31,12 @@ erDiagram
         string name
         string type "asset, liability, equity, income, expense"
         char currency "ISO 4217"
+        morph owner "nullable, set by HasLedger"
     }
     ledger_journal_entries {
         string description
         char currency
+        timestamp posted_at "accounting date"
         string idempotency_key UK "nullable"
         char request_hash "sha256 of the posting"
         bigint reverses_id UK "nullable"
@@ -44,7 +50,7 @@ erDiagram
 
 ## Usage
 
-Install the package and run the migrations (they are loaded automatically). It is not on Packagist yet; until then, add this repository as a [VCS repository](https://getcomposer.org/doc/05-repositories.md#vcs) in your `composer.json`.
+Install the package and run the migrations (they are loaded automatically).
 
 ```bash
 composer require arkhan0072-dev/laravel-ledger
@@ -104,6 +110,35 @@ $ledger->reverse($entry);                         // throws: Entry #1 has alread
 $entry->delete();                                 // throws ImmutableRecord
 ```
 
+### Accounts for any model
+
+```php
+use Arkhan\Ledger\HasLedger;
+
+class User extends Model
+{
+    use HasLedger;
+}
+
+$wallet = $user->ledgerAccount('Wallet', AccountType::Liability, 'USD'); // opened on first use, reused after
+$user->ledgerAccounts;                                                    // all of the user's accounts
+$wallet->owner;                                                           // the user
+```
+
+Each owner has one account per name and currency. Asking for an existing name with a different type throws.
+
+### React to postings
+
+```php
+use Arkhan\Ledger\Events\EntryPosted;
+use Arkhan\Ledger\Events\EntryReversed;
+
+Event::listen(EntryPosted::class, fn (EntryPosted $e) => Notify::ledgerChanged($e->entry));
+Event::listen(EntryReversed::class, fn (EntryReversed $e) => Audit::log($e->reversal, $e->original));
+```
+
+Events fire once the surrounding transaction commits. A posting rolled back with your order, or a retry that returns the stored entry, fires nothing.
+
 ### Dates, past balances and the trial balance
 
 Every entry has an accounting date (`posted_at`), which defaults to now and can be set when the
@@ -156,6 +191,69 @@ Ledger has 2 problem(s).
 
 The same check is available in code as `$ledger->verify()`, which returns the list of problems.
 
+### Database guards
+
+A migration adds triggers that refuse `UPDATE` and `DELETE` on `ledger_journal_entries` and `ledger_entry_lines`. On PostgreSQL a deferred constraint trigger also refuses to commit any entry that does not balance or has fewer than two lines, whoever wrote it.
+
+On MySQL with binary logging on (the default, and usual on managed databases), a user without `SUPER` may only create triggers when `log_bin_trust_function_creators = 1`. Without it the migration still succeeds, skips the MySQL triggers and logs a warning; set the variable and run the migration again to add them. The Eloquent guards and `ledger:verify` work either way.
+
+## Recipes
+
+Each recipe runs as a test in [`tests/Feature/RecipesTest.php`](tests/Feature/RecipesTest.php).
+
+### Prepaid wallet
+
+A customer's wallet is money you owe them, so it is a liability.
+
+```php
+$wallet = $customer->ledgerAccount('Wallet', AccountType::Liability, 'USD');
+
+$ledger->post('Wallet top-up', [Line::debit($stripe, 5_000), Line::credit($wallet, 5_000)], idempotencyKey: 'topup-81');
+$ledger->post('Order #12 paid from wallet', [Line::debit($wallet, 1_800), Line::credit($sales, 1_800)]);
+
+$wallet->balance(); // 3200: $32.00 left to spend
+```
+
+### Marketplace sale with fees, then a payout
+
+The customer pays $100.00, the card processor keeps $3.20, the platform keeps 10% and owes the seller the rest.
+
+```php
+$payable = $seller->ledgerAccount('Payable', AccountType::Liability, 'USD');
+
+$ledger->post('Order #55', [
+    Line::debit($stripe, 9_680),
+    Line::debit($cardFees, 320),
+    Line::credit($payable, 9_000),
+    Line::credit($commission, 1_000),
+]);
+
+$ledger->post('Payout to seller 3', [Line::debit($payable, 9_000), Line::credit($bank, 9_000)]);
+```
+
+### Stripe charges and refunds
+
+Use the Stripe object ID as the idempotency key, so a webhook delivered twice is booked once.
+
+```php
+$ledger->post('Stripe charge ch_3Pq', [Line::debit($stripe, 2_500), Line::credit($sales, 2_500)], idempotencyKey: 'ch_3Pq');
+
+// Partial refund: its own entry, keyed by the refund ID.
+$ledger->post('Stripe refund re_9Lm', [Line::debit($sales, 1_000), Line::credit($stripe, 1_000)], idempotencyKey: 're_9Lm');
+
+// Full refund: reverse the charge. A second reversal is refused.
+$ledger->reverse($charge, 'Refund of ch_4Zx');
+```
+
+## Choosing a package
+
+| Package | Pick it when |
+|---|---|
+| **arkhan0072-dev/laravel-ledger** | You need a small, strict ledger inside your app (payments, wallets, marketplaces), in several currencies, with the database refusing bad data. |
+| [ekmungai/eloquent-ifrs](https://github.com/ekmungai/eloquent-ifrs) | You need full IFRS bookkeeping: invoices, VAT, reporting periods and financial statements. |
+| [scottlaurent/accounting](https://github.com/scottlaurent/accounting) | You want a simple journal attached to each model with a running balance. |
+| [alimrun/laravel-ledger](https://github.com/alimrun/laravel-ledger) | You want single-currency books with parties, periods and reports built in. |
+
 ## Design decisions
 
 - **Validate first, then write in one transaction.** A rejected entry leaves no rows behind, and a database error mid-write rolls the whole entry back.
@@ -166,9 +264,9 @@ The same check is available in code as `$ledger->verify()`, which returns the li
 
 ## Not included yet
 
-- **Database-level immutability.** Updates and deletes are blocked in Eloquent; raw SQL can still change rows (that is what `ledger:verify` catches). Revoking `UPDATE`/`DELETE` from the app's database user or adding triggers closes this.
-- **Currencies without two decimal places** (JPY, KWD) are stored correctly but printed by `ledger:trial-balance` as if they had two.
-- **Period closing** (locking a month once it is reported).
+- **Currency conversion entries** with FX gain and loss (planned for 0.3).
+- **Period closing**, locking a month once it is reported (planned for 0.3).
+- **Commit-time balance check on MySQL and SQLite.** They have no deferred triggers; the package validates before writing and `ledger:verify` audits afterwards.
 - **Balance snapshots** for accounts with millions of lines; summing lines is fast with the `account_id` index up to that point.
 
 ## Testing
