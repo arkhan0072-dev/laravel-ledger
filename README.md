@@ -11,7 +11,8 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Idempotent posting.** Send an idempotency key with a posting (an order ID, a webhook event ID) and a retry returns the stored entry instead of booking it twice.
 - **Append-only history.** Posted entries and lines cannot be updated or deleted; mistakes are cancelled with a reversal entry, like on paper.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
-- **Tested on SQLite and PostgreSQL**, PHP 8.3-8.4, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
+- **Entry dates and reports.** Book an entry on its accounting date, read any balance as of a past date, and print a trial balance.
+- **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
 
 ## Data model
 
@@ -103,6 +104,40 @@ $ledger->reverse($entry);                         // throws: Entry #1 has alread
 $entry->delete();                                 // throws ImmutableRecord
 ```
 
+### Dates, past balances and the trial balance
+
+Every entry has an accounting date (`posted_at`), which defaults to now and can be set when the
+business event happened on another day:
+
+```php
+$ledger->post('October invoice', $lines, postedAt: Carbon::parse('2026-10-31'));
+$ledger->reverse($entry, 'Credit note', postedAt: Carbon::parse('2026-11-05'));
+
+$cash->balance(Carbon::parse('2026-10-31')); // balance at the end of October
+```
+
+A trial balance lists each account's net balance on the debit or credit side for one currency:
+
+```php
+$ledger->trialBalance('USD', Carbon::parse('2026-10-31'));
+// ['rows' => [['code' => '1000', 'name' => 'Cash', 'type' => 'asset', 'debit' => 125050, 'credit' => 0], ...],
+//  'debits' => 125050, 'credits' => 125050]
+```
+
+```bash
+$ php artisan ledger:trial-balance USD --as-of=2026-10-31
++------+---------+--------+----------+----------+
+| Code | Account | Type   | Debit    | Credit   |
++------+---------+--------+----------+----------+
+| 1000 | Cash    | asset  | 1,250.50 |          |
+| 4000 | Sales   | income |          | 1,250.50 |
+|      | Total   |        | 1,250.50 | 1,250.50 |
++------+---------+--------+----------+----------+
+Trial balance for USD as of 2026-10-31: debits equal credits.
+```
+
+The command exits with status 1 when debits and credits differ.
+
 ### Audit the books
 
 ```bash
@@ -132,7 +167,8 @@ The same check is available in code as `$ledger->verify()`, which returns the li
 ## Not included yet
 
 - **Database-level immutability.** Updates and deletes are blocked in Eloquent; raw SQL can still change rows (that is what `ledger:verify` catches). Revoking `UPDATE`/`DELETE` from the app's database user or adding triggers closes this.
-- **Balances at a past date** and a trial balance report.
+- **Currencies without two decimal places** (JPY, KWD) are stored correctly but printed by `ledger:trial-balance` as if they had two.
+- **Period closing** (locking a month once it is reported).
 - **Balance snapshots** for accounts with millions of lines; summing lines is fast with the `account_id` index up to that point.
 
 ## Testing
@@ -144,7 +180,7 @@ vendor/bin/phpstan analyse            # static analysis, max level
 vendor/bin/pint --test                # code style
 ```
 
-Set `DB_CONNECTION=pgsql` and the usual `DB_*` variables to run the same tests against PostgreSQL, as CI does.
+Set `DB_CONNECTION=pgsql` or `DB_CONNECTION=mysql` and the usual `DB_*` variables to run the same tests against PostgreSQL or MySQL, as CI does.
 
 ## License
 
