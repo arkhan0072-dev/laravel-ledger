@@ -335,7 +335,9 @@ On MySQL with binary logging on (the default, and usual on managed databases), a
 
 ```bash
 php artisan migrate:refresh --path=vendor/arkhan0072-dev/laravel-ledger/database/migrations/2026_11_27_000001_add_ledger_database_guards.php
-``` The Eloquent guards and `ledger:verify` work either way.
+```
+
+The Eloquent guards and `ledger:verify` work either way.
 
 ## Recipes
 
