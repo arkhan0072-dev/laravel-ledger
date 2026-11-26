@@ -85,5 +85,10 @@ jobs:
 
       - run: composer update --prefer-dist --no-interaction --no-progress --with-all-dependencies
 
+      # MySQL 8.4 logs binary changes, so a non-SUPER user may only create the guard triggers with this on.
+      - name: Allow trigger creation on MySQL
+        if: matrix.db == 'mysql'
+        run: mysql -h 127.0.0.1 -uroot -pledger -e "SET GLOBAL log_bin_trust_function_creators = 1"
+
       - name: Tests (fails below 100% coverage)
         run: vendor/bin/pest --coverage --min=100
