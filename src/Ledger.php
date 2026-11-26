@@ -2,6 +2,8 @@
 
 namespace Arkhan\Ledger;
 
+use Arkhan\Ledger\Events\EntryPosted;
+use Arkhan\Ledger\Events\EntryReversed;
 use Arkhan\Ledger\Exceptions\InvalidEntry;
 use Arkhan\Ledger\Models\EntryLine;
 use Arkhan\Ledger\Models\JournalEntry;
@@ -35,7 +37,7 @@ class Ledger
         $hash = $this->hash($description, $rows, $postedAt);
 
         try {
-            return $this->write($rows, [
+            $entry = $this->write($rows, [
                 'description' => $description,
                 'currency' => $currency,
                 'idempotency_key' => $idempotencyKey,
@@ -51,6 +53,10 @@ class Ledger
 
             return $existing->load('lines');
         }
+
+        event(new EntryPosted($entry));
+
+        return $entry;
     }
 
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
@@ -63,7 +69,7 @@ class Ledger
         ])->all();
 
         try {
-            return $this->write($rows, [
+            $reversal = $this->write($rows, [
                 'description' => $description ?? "Reversal of entry #{$entry->id}",
                 'currency' => $entry->currency,
                 'reverses_id' => $entry->id,
@@ -72,6 +78,10 @@ class Ledger
         } catch (UniqueConstraintViolationException $e) {
             throw new InvalidEntry("Entry #{$entry->id} has already been reversed.", previous: $e);
         }
+
+        event(new EntryReversed($reversal, $entry));
+
+        return $reversal;
     }
 
     /**
