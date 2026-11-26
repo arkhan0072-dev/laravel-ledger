@@ -12,7 +12,7 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Append-only history.** Posted entries and lines cannot be updated or deleted; mistakes are cancelled with a reversal entry, like on paper.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
 - **Entry dates and reports.** Book an entry on its accounting date, read any balance as of a past date, and print a trial balance.
-- **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
+- **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4 and Laravel 12-13, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
 
 ## Data model
 
