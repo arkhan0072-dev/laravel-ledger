@@ -5,6 +5,7 @@ namespace Arkhan\Ledger;
 use Arkhan\Ledger\Exceptions\InvalidEntry;
 use Arkhan\Ledger\Models\EntryLine;
 use Arkhan\Ledger\Models\JournalEntry;
+use DateTimeInterface;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
@@ -18,11 +19,11 @@ class Ledger
      * Record a journal entry. It is stored only if it balances, all in one transaction.
      *
      * With an idempotency key, retrying the same posting returns the stored entry
-     * instead of recording it twice.
+     * instead of recording it twice. $postedAt is the accounting date (default: now).
      *
      * @param  list<Line>  $lines
      */
-    public function post(string $description, array $lines, ?string $idempotencyKey = null): JournalEntry
+    public function post(string $description, array $lines, ?string $idempotencyKey = null, ?DateTimeInterface $postedAt = null): JournalEntry
     {
         $currency = $this->validate($description, $lines);
         $description = trim($description);
@@ -31,7 +32,7 @@ class Ledger
             'debit' => $line->debit,
             'credit' => $line->credit,
         ], $lines);
-        $hash = $this->hash($description, $rows);
+        $hash = $this->hash($description, $rows, $postedAt);
 
         try {
             return $this->write($rows, [
@@ -39,6 +40,7 @@ class Ledger
                 'currency' => $currency,
                 'idempotency_key' => $idempotencyKey,
                 'request_hash' => $hash,
+                'posted_at' => $postedAt ?? now(),
             ]);
         } catch (UniqueConstraintViolationException $e) {
             // The unique index decides races between concurrent retries.
@@ -52,7 +54,7 @@ class Ledger
     }
 
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
-    public function reverse(JournalEntry $entry, ?string $description = null): JournalEntry
+    public function reverse(JournalEntry $entry, ?string $description = null, ?DateTimeInterface $postedAt = null): JournalEntry
     {
         $rows = $entry->lines->map(fn (EntryLine $line) => [
             'account_id' => $line->account_id,
@@ -65,6 +67,7 @@ class Ledger
                 'description' => $description ?? "Reversal of entry #{$entry->id}",
                 'currency' => $entry->currency,
                 'reverses_id' => $entry->id,
+                'posted_at' => $postedAt ?? now(),
             ]);
         } catch (UniqueConstraintViolationException $e) {
             throw new InvalidEntry("Entry #{$entry->id} has already been reversed.", previous: $e);
@@ -117,6 +120,40 @@ class Ledger
     }
 
     /**
+     * Net balance of every account in one currency, placed on the debit or credit side.
+     * Total debits equal total credits whenever the stored data is consistent.
+     *
+     * @return array{rows: list<array{code: string, name: string, type: string, debit: int, credit: int}>, debits: int, credits: int}
+     */
+    public function trialBalance(string $currency, ?DateTimeInterface $asOf = null): array
+    {
+        $accounts = DB::table('ledger_accounts as a')
+            ->join('ledger_entry_lines as l', 'l.account_id', '=', 'a.id')
+            ->join('ledger_journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
+            ->where('a.currency', strtoupper($currency))
+            ->when($asOf, fn (Builder $q) => $q->where('e.posted_at', '<=', $asOf))
+            ->groupBy('a.id', 'a.code', 'a.name', 'a.type')
+            ->orderBy('a.code')
+            ->selectRaw('a.code, a.name, a.type, sum(l.debit) - sum(l.credit) as net')
+            ->get();
+
+        $rows = [];
+        $debits = $credits = 0;
+        foreach ($accounts as $a) {
+            /** @var object{code: string, name: string, type: string, net: int|string} $a */
+            $net = (int) $a->net;
+            if ($net === 0) {
+                continue;
+            }
+            $rows[] = ['code' => $a->code, 'name' => $a->name, 'type' => $a->type, 'debit' => max($net, 0), 'credit' => max(-$net, 0)];
+            $debits += max($net, 0);
+            $credits += max(-$net, 0);
+        }
+
+        return ['rows' => $rows, 'debits' => $debits, 'credits' => $credits];
+    }
+
+    /**
      * @param  array<int, Row>  $rows
      * @param  array<string, mixed>  $attributes
      */
@@ -130,13 +167,17 @@ class Ledger
         });
     }
 
-    /** Line order does not change an entry's meaning, so it does not change the hash. */
-    /** @param  array<int, Row>  $rows */
-    private function hash(string $description, array $rows): string
+    /**
+     * Line order does not change an entry's meaning, so it does not change the hash.
+     * The date counts only when the caller gave one; a default "now" would differ on every retry.
+     *
+     * @param  array<int, Row>  $rows
+     */
+    private function hash(string $description, array $rows, ?DateTimeInterface $postedAt): string
     {
         usort($rows, fn ($a, $b) => [$a['account_id'], $a['debit'], $a['credit']] <=> [$b['account_id'], $b['debit'], $b['credit']]);
 
-        return hash('sha256', json_encode([$description, $rows], JSON_THROW_ON_ERROR));
+        return hash('sha256', json_encode([$description, $rows, $postedAt?->format(DATE_ATOM)], JSON_THROW_ON_ERROR));
     }
 
     /**

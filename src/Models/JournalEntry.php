@@ -4,6 +4,7 @@ namespace Arkhan\Ledger\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -12,6 +13,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string|null $idempotency_key
  * @property string|null $request_hash
  * @property int|null $reverses_id
+ * @property Carbon $posted_at the accounting date, which can differ from created_at
  */
 class JournalEntry extends Model
 {
@@ -19,9 +21,9 @@ class JournalEntry extends Model
 
     protected $table = 'ledger_journal_entries';
 
-    protected $fillable = ['description', 'currency', 'idempotency_key', 'request_hash', 'reverses_id'];
+    protected $fillable = ['description', 'currency', 'idempotency_key', 'request_hash', 'reverses_id', 'posted_at'];
 
-    protected $casts = ['reverses_id' => 'integer'];
+    protected $casts = ['reverses_id' => 'integer', 'posted_at' => 'datetime'];
 
     /** @return HasMany<EntryLine, $this> */
     public function lines(): HasMany

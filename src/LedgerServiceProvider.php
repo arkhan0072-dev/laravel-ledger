@@ -14,6 +14,6 @@ class LedgerServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
-        $this->commands([Console\VerifyCommand::class]);
+        $this->commands([Console\VerifyCommand::class, Console\TrialBalanceCommand::class]);
     }
 }
