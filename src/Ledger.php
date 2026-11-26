@@ -198,6 +198,36 @@ class Ledger
         return (int) -round($value);
     }
 
+    /**
+     * Book what fxGainLoss() reports, in $base, between the base exchange account and $gainLoss
+     * (an income or expense account). Afterwards fxGainLoss() is zero at these rates, so each
+     * booking records only the movement since the last one. Returns null when there is nothing to book.
+     *
+     * @param  array<string, mixed>  $rates
+     */
+    public function bookFxGainLoss(string $base, array $rates, Account $gainLoss, ?DateTimeInterface $asOf = null): ?JournalEntry
+    {
+        $base = strtoupper($base);
+        if (! in_array($gainLoss->type, [AccountType::Income, AccountType::Expense], true)) {
+            throw new InvalidEntry("The FX gain/loss account must be an income or expense account, got {$gainLoss->type->value}.");
+        }
+        if ($gainLoss->currency !== $base) {
+            throw new InvalidEntry("The FX gain/loss account must be in {$base}, got {$gainLoss->currency}.");
+        }
+        $result = $this->fxGainLoss($base, $rates, $asOf);
+        if ($result === 0) {
+            return null;
+        }
+
+        $exchange = $this->exchangeAccount($base);
+        $date = $asOf ?? now();
+        $lines = $result > 0
+            ? [Line::debit($exchange, $result), Line::credit($gainLoss, $result)]
+            : [Line::debit($gainLoss, -$result), Line::credit($exchange, -$result)];
+
+        return $this->post('FX revaluation '.Carbon::instance($date)->toDateString(), $lines, postedAt: $date);
+    }
+
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
     public function reverse(JournalEntry $entry, ?string $description = null, ?DateTimeInterface $postedAt = null): JournalEntry
     {
