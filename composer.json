@@ -2,6 +2,8 @@
     "name": "arkhan0072-dev/laravel-ledger",
     "description": "Double-entry accounting ledger for Laravel: balanced journal entries, integer money, account balances.",
     "type": "library",
+    "keywords": ["laravel", "ledger", "accounting", "double-entry", "bookkeeping", "fintech", "trial-balance", "idempotency"],
+    "homepage": "https://github.com/arkhan0072-dev/laravel-ledger",
     "license": "MIT",
     "authors": [
         { "name": "Abdulrehman Khan", "email": "abdulrehmankhan0072@gmail.com" }
