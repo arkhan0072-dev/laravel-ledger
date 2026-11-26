@@ -6,6 +6,18 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
+### Added
+
+- `Ledger::convert()`: exchange money between currencies as one balanced entry per currency, stored together or not at all, through per-currency `FX-<code>` exchange accounts opened on first use. An idempotency key covers both entries.
+- `Ledger::fxGainLoss()`: the gain or loss on all conversions, valued in a base currency at the rates you pass, with each currency's decimal places, optionally as of a date.
+- `Ledger::closePeriod()`, `reopenPeriod()` and `closedThrough()`: once a period is closed, postings, reversals and conversions dated in it are refused. Every close and reopen is kept in `ledger_period_closes`.
+
+### Upgrading
+
+Run `php artisan migrate` to create `ledger_period_closes`. No code changes are needed; nothing is locked until you call `closePeriod()`.
+
 ## [0.2.1] - 2026-11-26
 
 ### Fixed
@@ -57,7 +69,8 @@ First release.
 - `Ledger::verify()` and `php artisan ledger:verify` to find data changed outside the package.
 - Support for MySQL, PostgreSQL and SQLite on PHP 8.3+ and Laravel 12.
 
-[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/arkhan0072-dev/laravel-ledger/releases/tag/v0.1.0

@@ -14,6 +14,8 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Ledger accounts for any model.** Add the `HasLedger` trait to a user, shop or merchant and call `$user->ledgerAccount('Wallet', AccountType::Liability, 'USD')`.
 - **Events.** `EntryPosted` and `EntryReversed` fire after the transaction commits, never for a rolled-back or retried posting.
 - **Multi-currency, with real decimal places.** Any number of currencies (one per entry); JPY has none, KWD has three, and reports print each correctly.
+- **Currency conversion and FX gain/loss.** `convert()` books an exchange as one balanced entry per currency; `fxGainLoss()` values the result in your base currency at today's rates.
+- **Period closing.** Close a month once it is reported and nothing can be posted, reversed or converted into it.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
 - **Entry dates and reports.** Book an entry on its accounting date, read any balance as of a past date, and print a trial balance.
 - **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4 and Laravel 12-13, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
@@ -45,6 +47,9 @@ erDiagram
         bigint account_id FK
         bigint debit "minor units"
         bigint credit "minor units"
+    }
+    ledger_period_closes {
+        date closed_through "nullable; latest row is the lock"
     }
 ```
 
@@ -191,6 +196,42 @@ Ledger has 2 problem(s).
 
 The same check is available in code as `$ledger->verify()`, which returns the list of problems.
 
+### Convert between currencies
+
+```php
+// Paid $100.00 for 92.00 EUR.
+[$usdEntry, $eurEntry] = $ledger->convert('Buy EUR', $cashUsd, 10_000, $cashEur, 9_200, idempotencyKey: 'fx-7');
+```
+
+Each side is an ordinary balanced entry in its own currency, posted through that currency's exchange account (`FX-USD`, `FX-EUR`, opened on first use). Both are stored or neither is, and the idempotency key covers the pair.
+
+### FX gain or loss
+
+The exchange accounts hold what every conversion gave and received. Valued at today's rates in one base currency, their net is the gain or loss:
+
+```php
+$ledger->fxGainLoss('USD', ['EUR' => 1.10]);  // 120: the 92.00 EUR are now worth $101.20
+$ledger->fxGainLoss('USD', ['EUR' => 1.05]);  // -340: now worth $96.60
+$ledger->fxGainLoss('USD', $rates, Carbon::parse('2026-10-31')); // at month end
+```
+
+Rates give the value of one unit of each currency in the base currency. A currency held without a rate throws, so a missing rate never reads as zero.
+
+### Close a period
+
+```php
+$ledger->closePeriod(Carbon::parse('2026-10-31'));
+
+$ledger->post('Late invoice', $lines, postedAt: Carbon::parse('2026-10-30'));
+// throws: The books are closed through 2026-10-31; date this entry after that.
+
+$ledger->reverse($octoberEntry);            // fine: the reversal is dated today
+$ledger->reopenPeriod(Carbon::parse('2026-09-30')); // move the date back to correct October
+$ledger->closedThrough();                   // 2026-09-30
+```
+
+Every close and reopen is stored as its own row in `ledger_period_closes`, so the lock has a history. A retried posting that was stored before the close still returns the stored entry.
+
 ### Database guards
 
 A migration adds triggers that refuse `UPDATE` and `DELETE` on `ledger_journal_entries` and `ledger_entry_lines`. On PostgreSQL a deferred constraint trigger also refuses to commit any entry that does not balance or has fewer than two lines, whoever wrote it.
@@ -264,12 +305,12 @@ $ledger->reverse($charge, 'Refund of ch_4Zx');
 - **Balances are derived, not stored.** A balance is the sum of the account's lines, so concurrent postings cannot leave a stale running total, and there is nothing to keep in sync.
 - **The database settles races.** Two concurrent retries with the same idempotency key, or two concurrent reversals of one entry, both hit a unique index; the loser gets the stored entry or a clear error, never a duplicate.
 - **Idempotency compares the request, not just the key.** A hash of the description and lines is stored with the key, so a bug that reuses a key for a different payment is caught instead of silently returning the wrong entry.
-- **One currency per entry.** Currency conversion needs exchange-rate and FX gain/loss accounts and belongs in the application, as two entries.
+- **One currency per entry.** Every entry balances in its own currency. A conversion is two entries joined through per-currency exchange accounts (the trading-account method), so each currency's books stay balanced and the FX result can be valued at any rate later.
 
 ## Not included yet
 
-- **Currency conversion entries** with FX gain and loss (planned for 0.3).
-- **Period closing**, locking a month once it is reported (planned for 0.3).
+- **Booking FX revaluation** to a gain/loss account; `fxGainLoss()` reports the figure, and your application decides when to book it.
+- **Rate feeds.** You pass the rates; the package does not fetch them.
 - **Commit-time balance check on MySQL and SQLite.** They have no deferred triggers; the package validates before writing and `ledger:verify` audits afterwards.
 - **Balance snapshots** for accounts with millions of lines; summing lines is fast with the `account_id` index up to that point.
 
