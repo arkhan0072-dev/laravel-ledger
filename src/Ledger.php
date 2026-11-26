@@ -12,6 +12,7 @@ use DateTimeInterface;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 /**
  * @phpstan-type Row array{account_id: int, debit: int, credit: int}
@@ -79,6 +80,35 @@ class Ledger
             $this->post($description, [$sold, Line::debit($this->exchangeAccount($from->currency), $fromAmount)], $idempotencyKey === null ? null : "{$idempotencyKey}:sold", $postedAt),
             $this->post($description, [$bought, Line::credit($this->exchangeAccount($to->currency), $toAmount)], $idempotencyKey === null ? null : "{$idempotencyKey}:bought", $postedAt),
         ]);
+    }
+
+    /**
+     * Gain (positive) or loss (negative) on all conversions, in $base minor units, at today's rates.
+     * The exchange accounts hold what conversions gave (debits) and received (credits); valued in one
+     * currency, their net is what the exchanges earned or cost.
+     *
+     * @param  array<string, mixed>  $rates  value of one unit of each currency in $base, e.g. ['EUR' => 1.08]
+     */
+    public function fxGainLoss(string $base, array $rates, ?DateTimeInterface $asOf = null): int
+    {
+        $base = strtoupper($base);
+        $value = 0.0;
+
+        foreach (Account::where('code', 'like', 'FX-%')->get() as $exchange) {
+            $currency = $exchange->currency;
+            $given = -$exchange->balance($asOf); // net debit, in $currency minor units
+            if ($given === 0 || $exchange->code !== "FX-{$currency}") {
+                continue;
+            }
+            $rate = $currency === $base ? 1 : ($rates[$currency] ?? throw new InvalidArgumentException("No {$base} rate for {$currency}."));
+            if (! is_numeric($rate) || $rate <= 0) {
+                throw new InvalidArgumentException("The {$currency} rate must be a positive number.");
+            }
+            $value += $given / 10 ** Currency::decimals($currency) * (float) $rate * 10 ** Currency::decimals($base);
+        }
+
+        // Rounded once, at the end, so per-currency rounding never adds up.
+        return (int) -round($value);
     }
 
     /** Cancel an entry by posting its mirror image. Posted entries are never edited or deleted. */
