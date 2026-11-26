@@ -19,6 +19,7 @@ use InvalidArgumentException;
 
 /**
  * @phpstan-type Row array{account_id: int, debit: int, credit: int}
+ * @phpstan-type Report array{code: string|null, name: string, type: string, amount: int}
  */
 class Ledger
 {
@@ -314,30 +315,101 @@ class Ledger
      */
     public function trialBalance(string $currency, ?DateTimeInterface $asOf = null): array
     {
+        $rows = [];
+        $debits = $credits = 0;
+        foreach ($this->netByAccount($currency, null, $asOf) as $a) {
+            $rows[] = ['code' => $a['code'], 'name' => $a['name'], 'type' => $a['type'], 'debit' => max($a['net'], 0), 'credit' => max(-$a['net'], 0)];
+            $debits += max($a['net'], 0);
+            $credits += max(-$a['net'], 0);
+        }
+
+        return ['rows' => $rows, 'debits' => $debits, 'credits' => $credits];
+    }
+
+    /**
+     * Profit and loss in one currency between two dates (whole days, both included; default: all time).
+     * Amounts are on each account's normal side.
+     *
+     * @return array{income: list<Report>, expenses: list<Report>, total_income: int, total_expenses: int, net: int}
+     */
+    public function incomeStatement(string $currency, ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): array
+    {
+        $sections = $this->sections($currency, $from, $to === null ? null : Carbon::instance($to)->endOfDay());
+        $income = array_sum(array_column($sections['income'], 'amount'));
+        $expenses = array_sum(array_column($sections['expense'], 'amount'));
+
+        return ['income' => $sections['income'], 'expenses' => $sections['expense'], 'total_income' => $income, 'total_expenses' => $expenses, 'net' => $income - $expenses];
+    }
+
+    /**
+     * Assets, liabilities and equity in one currency at the end of $asOf (default: now).
+     * Income and expenses not yet closed into equity appear as one equity line, so assets
+     * always equal liabilities plus equity.
+     *
+     * @return array{assets: list<Report>, liabilities: list<Report>, equity: list<Report>, total_assets: int, total_liabilities: int, total_equity: int}
+     */
+    public function balanceSheet(string $currency, ?DateTimeInterface $asOf = null): array
+    {
+        $sections = $this->sections($currency, null, $asOf === null ? null : Carbon::instance($asOf)->endOfDay());
+        $equity = $sections['equity'];
+        $earnings = array_sum(array_column($sections['income'], 'amount')) - array_sum(array_column($sections['expense'], 'amount'));
+        if ($earnings !== 0) {
+            $equity[] = ['code' => null, 'name' => 'Earnings not yet closed', 'type' => 'equity', 'amount' => $earnings];
+        }
+
+        return [
+            'assets' => $sections['asset'],
+            'liabilities' => $sections['liability'],
+            'equity' => $equity,
+            'total_assets' => array_sum(array_column($sections['asset'], 'amount')),
+            'total_liabilities' => array_sum(array_column($sections['liability'], 'amount')),
+            'total_equity' => array_sum(array_column($equity, 'amount')),
+        ];
+    }
+
+    /**
+     * Accounts grouped by type, each amount on its type's normal side.
+     *
+     * @return array<string, list<Report>> keyed by AccountType value
+     */
+    private function sections(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to): array
+    {
+        $sections = array_fill_keys(array_map(fn (AccountType $t) => $t->value, AccountType::cases()), []);
+        foreach ($this->netByAccount($currency, $from, $to) as $a) {
+            $type = AccountType::from($a['type']);
+            $sections[$a['type']][] = ['code' => $a['code'], 'name' => $a['name'], 'type' => $a['type'], 'amount' => $type->isDebitNormal() ? $a['net'] : -$a['net']];
+        }
+
+        return $sections;
+    }
+
+    /**
+     * Debits minus credits per account in one currency, accounts with activity only, by code.
+     *
+     * @return list<array{code: string, name: string, type: string, net: int}>
+     */
+    private function netByAccount(string $currency, ?DateTimeInterface $from, ?DateTimeInterface $to): array
+    {
         $accounts = DB::table('ledger_accounts as a')
             ->join('ledger_entry_lines as l', 'l.account_id', '=', 'a.id')
             ->join('ledger_journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
             ->where('a.currency', strtoupper($currency))
-            ->when($asOf, fn (Builder $q) => $q->where('e.posted_at', '<=', $asOf))
+            ->when($from, fn (Builder $q, DateTimeInterface $from) => $q->where('e.posted_at', '>=', Carbon::instance($from)->startOfDay()))
+            ->when($to, fn (Builder $q) => $q->where('e.posted_at', '<=', $to))
             ->groupBy('a.id', 'a.code', 'a.name', 'a.type')
             ->orderBy('a.code')
             ->selectRaw('a.code, a.name, a.type, sum(l.debit) - sum(l.credit) as net')
             ->get();
 
         $rows = [];
-        $debits = $credits = 0;
         foreach ($accounts as $a) {
             /** @var object{code: string, name: string, type: string, net: int|string} $a */
-            $net = (int) $a->net;
-            if ($net === 0) {
-                continue;
+            if ((int) $a->net !== 0) {
+                $rows[] = ['code' => $a->code, 'name' => $a->name, 'type' => $a->type, 'net' => (int) $a->net];
             }
-            $rows[] = ['code' => $a->code, 'name' => $a->name, 'type' => $a->type, 'debit' => max($net, 0), 'credit' => max(-$net, 0)];
-            $debits += max($net, 0);
-            $credits += max(-$net, 0);
         }
 
-        return ['rows' => $rows, 'debits' => $debits, 'credits' => $credits];
+        return $rows;
     }
 
     /** Lock every date up to and including $through: nothing can be posted or reversed into it. */
