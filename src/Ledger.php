@@ -9,6 +9,7 @@ use Arkhan\Ledger\Models\Account;
 use Arkhan\Ledger\Models\EntryLine;
 use Arkhan\Ledger\Models\JournalEntry;
 use DateTimeInterface;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -25,10 +26,11 @@ class Ledger
      *
      * With an idempotency key, retrying the same posting returns the stored entry
      * instead of recording it twice. $postedAt is the accounting date (default: now).
+     * $reference links the entry to the record it books, e.g. an order or payment.
      *
      * @param  list<Line>  $lines
      */
-    public function post(string $description, array $lines, ?string $idempotencyKey = null, ?DateTimeInterface $postedAt = null): JournalEntry
+    public function post(string $description, array $lines, ?string $idempotencyKey = null, ?DateTimeInterface $postedAt = null, ?Model $reference = null): JournalEntry
     {
         $currency = $this->validate($description, $lines);
         $description = trim($description);
@@ -37,7 +39,7 @@ class Ledger
             'debit' => $line->debit,
             'credit' => $line->credit,
         ], $lines);
-        $hash = $this->hash($description, $rows, $postedAt);
+        $hash = $this->hash($description, $rows, $postedAt, $reference);
 
         try {
             $entry = $this->write($rows, [
@@ -46,6 +48,8 @@ class Ledger
                 'idempotency_key' => $idempotencyKey,
                 'request_hash' => $hash,
                 'posted_at' => $postedAt ?? now(),
+                'reference_type' => $reference?->getMorphClass(),
+                'reference_id' => $reference?->getKey(),
             ]);
         } catch (UniqueConstraintViolationException $e) {
             // The unique index decides races between concurrent retries.
@@ -126,6 +130,8 @@ class Ledger
                 'description' => $description ?? "Reversal of entry #{$entry->id}",
                 'currency' => $entry->currency,
                 'reverses_id' => $entry->id,
+                'reference_type' => $entry->reference_type,
+                'reference_id' => $entry->reference_id,
                 'posted_at' => $postedAt ?? now(),
             ]);
         } catch (UniqueConstraintViolationException $e) {
@@ -288,14 +294,20 @@ class Ledger
     /**
      * Line order does not change an entry's meaning, so it does not change the hash.
      * The date counts only when the caller gave one; a default "now" would differ on every retry.
+     * The reference counts only when given, so hashes stored before references existed still match.
      *
      * @param  array<int, Row>  $rows
      */
-    private function hash(string $description, array $rows, ?DateTimeInterface $postedAt): string
+    private function hash(string $description, array $rows, ?DateTimeInterface $postedAt, ?Model $reference): string
     {
         usort($rows, fn ($a, $b) => [$a['account_id'], $a['debit'], $a['credit']] <=> [$b['account_id'], $b['debit'], $b['credit']]);
 
-        return hash('sha256', json_encode([$description, $rows, $postedAt?->format(DATE_ATOM)], JSON_THROW_ON_ERROR));
+        $parts = [$description, $rows, $postedAt?->format(DATE_ATOM)];
+        if ($reference !== null) {
+            $parts[] = [$reference->getMorphClass(), $reference->getKey()];
+        }
+
+        return hash('sha256', json_encode($parts, JSON_THROW_ON_ERROR));
     }
 
     /**
