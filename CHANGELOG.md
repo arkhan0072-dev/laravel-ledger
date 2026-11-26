@@ -6,6 +6,17 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-26
+
+### Added
+
+- README: using laravel-ledger with laravel-zatca, to book each ZATCA (Saudi) e-invoice once, linked to it.
+- `composer.json` suggests laravel-zatca. An architecture test keeps the ledger independent of it.
+
+### Upgrading
+
+No changes needed.
+
 ## [0.5.0] - 2026-11-26
 
 ### Added
@@ -101,7 +112,8 @@ First release.
 - `Ledger::verify()` and `php artisan ledger:verify` to find data changed outside the package.
 - Support for MySQL, PostgreSQL and SQLite on PHP 8.3+ and Laravel 12.
 
-[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...v0.3.0
