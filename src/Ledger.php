@@ -267,6 +267,46 @@ class Ledger
     }
 
     /**
+     * Every line on one account between two dates (whole days, both included), with the
+     * balance before, after each line and at the end, on the account's normal side.
+     *
+     * @return array{opening: int, rows: list<array{date: string, entry_id: int, description: string, debit: int, credit: int, balance: int}>, closing: int}
+     */
+    public function statement(Account $account, ?DateTimeInterface $from = null, ?DateTimeInterface $to = null): array
+    {
+        $sign = $account->type->isDebitNormal() ? 1 : -1;
+        $lines = fn () => DB::table('ledger_entry_lines as l')
+            ->join('ledger_journal_entries as e', 'e.id', '=', 'l.journal_entry_id')
+            ->where('l.account_id', $account->id);
+        $start = $from === null ? null : Carbon::instance($from)->startOfDay();
+
+        // Separate sums: MySQL refuses debit - credit per row when the columns are unsigned and the result is negative.
+        $opening = $start === null ? 0 : $sign * ((int) $lines()->where('e.posted_at', '<', $start)->sum('l.debit') - (int) $lines()->where('e.posted_at', '<', $start)->sum('l.credit'));
+
+        $balance = $opening;
+        $rows = [];
+        $found = $lines()
+            ->when($start, fn (Builder $q) => $q->where('e.posted_at', '>=', $start))
+            ->when($to, fn (Builder $q, DateTimeInterface $to) => $q->where('e.posted_at', '<=', Carbon::instance($to)->endOfDay()))
+            ->orderBy('e.posted_at')->orderBy('e.id')->orderBy('l.id')
+            ->get(['e.posted_at', 'e.id as entry_id', 'e.description', 'l.debit', 'l.credit']);
+        foreach ($found as $line) {
+            /** @var object{posted_at: string, entry_id: int|string, description: string, debit: int|string, credit: int|string} $line */
+            $balance += $sign * ((int) $line->debit - (int) $line->credit);
+            $rows[] = [
+                'date' => Carbon::parse($line->posted_at)->toDateString(),
+                'entry_id' => (int) $line->entry_id,
+                'description' => $line->description,
+                'debit' => (int) $line->debit,
+                'credit' => (int) $line->credit,
+                'balance' => $balance,
+            ];
+        }
+
+        return ['opening' => $opening, 'rows' => $rows, 'closing' => $balance];
+    }
+
+    /**
      * Net balance of every account in one currency, placed on the debit or credit side.
      * Total debits equal total credits whenever the stored data is consistent.
      *
