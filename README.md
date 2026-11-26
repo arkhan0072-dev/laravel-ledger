@@ -20,7 +20,8 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 - **Currency conversion and FX gain/loss.** `convert()` books an exchange as one balanced entry per currency; `fxGainLoss()` values the result in your base currency at today's rates.
 - **Period closing.** Close a month once it is reported and nothing can be posted, reversed or converted into it.
 - **Integrity check.** `php artisan ledger:verify` finds corrupted data written outside the package and exits non-zero, so it can run in CI or a scheduled job.
-- **Entry dates and reports.** Book an entry on its accounting date, read any balance as of a past date, and print a trial balance.
+- **Financial reports.** Account statements with running balances, profit and loss, balance sheet and trial balance, for any date or period.
+- **Year-end close and a chart of accounts.** Close a year into retained earnings with one call, and nest accounts under parents whose totals roll up.
 - **Works on MySQL, PostgreSQL and SQLite**, tested on all three with PHP 8.3-8.4 and Laravel 12-13, with 100% line coverage enforced in CI, PHPStan at max level and Pint.
 
 ## Data model
@@ -28,6 +29,7 @@ Double-entry accounting for Laravel. Every journal entry must balance (debits = 
 ```mermaid
 erDiagram
     ledger_accounts ||--o{ ledger_entry_lines : "is used by"
+    ledger_accounts |o--o{ ledger_accounts : "is parent of"
     ledger_journal_entries ||--|{ ledger_entry_lines : "has 2 or more"
     ledger_journal_entries |o--o| ledger_journal_entries : "reverses"
 
@@ -38,6 +40,7 @@ erDiagram
         char currency "ISO 4217"
         morph owner "nullable, set by HasLedger"
         bigint min_balance "nullable; postings may not go below"
+        bigint parent_id FK "nullable; totals roll up"
     }
     ledger_journal_entries {
         string description
@@ -225,6 +228,51 @@ Trial balance for USD as of 2026-10-31: debits equal credits.
 
 The command exits with status 1 when debits and credits differ.
 
+### Statements and reports
+
+```php
+$ledger->statement($cash, Carbon::parse('2026-10-01'), Carbon::parse('2026-10-31'));
+// ['opening' => 1000, 'rows' => [['date' => '2026-10-01', 'entry_id' => 2, 'description' => 'October rent',
+//   'debit' => 0, 'credit' => 400, 'balance' => 600], ...], 'closing' => 850]
+
+$ledger->incomeStatement('USD', Carbon::parse('2026-01-01'), Carbon::parse('2026-12-31'));
+// ['income' => [...], 'expenses' => [...], 'total_income' => 9000, 'total_expenses' => 5000, 'net' => 4000]
+
+$ledger->balanceSheet('USD', Carbon::parse('2026-12-31'));
+// ['assets' => [...], 'liabilities' => [...], 'equity' => [...], 'total_assets' => ..., 'total_liabilities' => ..., 'total_equity' => ...]
+```
+
+Every row has `code`, `name`, `type` and `amount` on the account's normal side. Dates are whole days, both included. Profit not yet closed into equity appears on the balance sheet as an "Earnings not yet closed" line, so assets always equal liabilities plus equity.
+
+### Close the year
+
+```php
+$ledger->closeYear('USD', Carbon::parse('2026-12-31'), $retainedEarnings);
+$ledger->closePeriod(Carbon::parse('2026-12-31')); // and lock it
+```
+
+One entry, dated the year end, brings every income and expense account to zero and moves the result into retained earnings. The year's income statement still shows the real figures afterwards, closing the same year twice returns the same entry, and the next year starts from zero.
+
+### Chart of accounts
+
+```php
+$cash  = Account::create(['code' => '1000', 'name' => 'Cash', ...]);
+$bankA = Account::create(['code' => '1010', 'name' => 'Bank A', 'parent_id' => $cash->id, ...]);
+
+$cash->totalBalance();  // Cash plus every account under it, at any depth
+$cash->children;        // Bank A, ...
+```
+
+A child must use its parent's currency and type, and an account cannot be moved under its own descendant.
+
+### Book FX revaluation
+
+```php
+$ledger->bookFxGainLoss('USD', ['EUR' => 1.10], $fxGainLoss, Carbon::parse('2026-10-31'));
+```
+
+Posts what `fxGainLoss()` reports as a real entry against an income or expense account in the base currency. Afterwards `fxGainLoss()` is zero at those rates, so next month's booking records only the movement since.
+
 ### Audit the books
 
 ```bash
@@ -366,7 +414,6 @@ $ledger->reverse($charge, 'Refund of ch_4Zx');
 
 ## Not included yet
 
-- **Booking FX revaluation** to a gain/loss account; `fxGainLoss()` reports the figure, and your application decides when to book it.
 - **Rate feeds.** You pass the rates; the package does not fetch them.
 - **Commit-time balance check on MySQL and SQLite.** They have no deferred triggers; the package validates before writing and `ledger:verify` audits afterwards.
 - **Balance snapshots** for accounts with millions of lines; summing lines is fast with the `account_id` index up to that point.

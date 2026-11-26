@@ -6,6 +6,25 @@ All notable changes to this package are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
+### Added
+
+- `Ledger::statement()`: an account's lines between two dates with opening, running and closing balances.
+- `Ledger::incomeStatement()`: profit and loss for a period.
+- `Ledger::balanceSheet()`: assets, liabilities and equity at a date; earnings not yet closed appear as one equity line, so it always balances.
+- `Ledger::closeYear()`: one entry that closes income and expenses into retained earnings. Closing twice returns the same entry, and the closed year's income statement keeps its figures.
+- Parent accounts: `parent_id`, `parent`, `children` and `Account::totalBalance()`, which rolls up every descendant. A child must match its parent's currency and type, and loops are refused.
+- `Ledger::bookFxGainLoss()`: book the FX result as an entry; `fxGainLoss()` is then zero at those rates.
+
+### Changed
+
+- `trialBalance()`, `incomeStatement()` and `balanceSheet()` share one per-account query, so the three reports always agree.
+
+### Upgrading
+
+Run `php artisan migrate` (adds `parent_id` to accounts). No code changes are needed.
+
 ## [0.4.0] - 2026-11-26
 
 ### Added
@@ -82,7 +101,8 @@ First release.
 - `Ledger::verify()` and `php artisan ledger:verify` to find data changed outside the package.
 - Support for MySQL, PostgreSQL and SQLite on PHP 8.3+ and Laravel 12.
 
-[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/arkhan0072-dev/laravel-ledger/compare/v0.2.0...v0.2.1
